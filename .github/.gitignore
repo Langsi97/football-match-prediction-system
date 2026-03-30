@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Environment files
+.env
+
+# VS Code
+.vscode/
+
+# Data
+data/raw/
+data/interim/
+data/processed/
+data/external/*.xlsx
+data/external/*.csv
+
+# Artifacts
+artifacts/
+mlruns/
+logs/
+
+# OS files
+.DS_Store
+Thumbs.db
