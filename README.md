@@ -89,16 +89,24 @@ football-match-prediction-system/
 python -m scripts.run_data_load
 ```
 ### 2️⃣ Schema Validation
-```python -m scripts.run_schema_check```
+```
+python -m scripts.run_schema_check
+```
 
 ### 3️⃣ Season Merging
-```python -m scripts.run_merge_data```
+```
+python -m scripts.run_merge_data
+```
 
 ### 4️⃣ Preprocessing
-```python -m scripts.run_preprocess_matches```
+```
+python -m scripts.run_preprocess_matches
+```
 
 ### 5️⃣ Dataset Enrichment
-```python -m scripts.run_enrich_with_positions```
+```
+python -m scripts.run_enrich_with_positions
+```
 
 ## 📊 Dataset
 Seasons Covered
