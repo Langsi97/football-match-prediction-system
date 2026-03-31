@@ -55,7 +55,7 @@ Raw Data → Validation → Standardization → Merge → Preprocessing
 ---
 
 ## 📂 Project Structure
-
+```
 football-match-prediction-system/
 │
 ├── config/              # Pipeline configuration (YAML)
@@ -78,24 +78,27 @@ football-match-prediction-system/
 │
 ├── requirements.txt     # Dependencies
 └── README.md            # Project documentation
-
+```
 
 ---
 
 ## ⚙️ Pipeline (Production Flow)
 
 ### 1️⃣ Data Loading
-
+```
 python -m scripts.run_data_load
-
+```
 ### 2️⃣ Schema Validation
-python -m scripts.run_schema_check
+```python -m scripts.run_schema_check```
+
 ### 3️⃣ Season Merging
-python -m scripts.run_merge_data
+```python -m scripts.run_merge_data```
+
 ### 4️⃣ Preprocessing
-python -m scripts.run_preprocess_matches
+```python -m scripts.run_preprocess_matches```
+
 ### 5️⃣ Dataset Enrichment
-python -m scripts.run_enrich_with_positions
+```python -m scripts.run_enrich_with_positions```
 
 ## 📊 Dataset
 Seasons Covered
@@ -184,15 +187,16 @@ Dockerization
 Azure deployment
 
 ## 🧪 Example Output
-Model Prediction
+```Model Prediction
 Home Win: 52%
 Draw: 24%
 Away Win: 24%
-Converted Odds
+```
+```Converted Odds
 Home: 1.92
 Draw: 4.16
 Away: 4.16
-
+```
 ## Insight
 Bookmaker Odds > Model Odds → Overpriced → Not profitable
 
