@@ -1,0 +1,76 @@
+# ==============================
+# Python
+# ==============================
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# ==============================
+# Virtual environments
+# ==============================
+venv/
+.venv/
+env/
+
+# ==============================
+# Environment files
+# ==============================
+.env
+
+# ==============================
+# VS Code
+# ==============================
+.vscode/
+
+# ==============================
+# Jupyter
+# ==============================
+.ipynb_checkpoints/
+
+# ==============================
+# OS files
+# ==============================
+.DS_Store
+Thumbs.db
+
+# ==============================
+# Build / packaging
+# ==============================
+dist/
+build/
+*.egg-info/
+
+# ==============================
+# Logs
+# ==============================
+*.log
+logs/
+
+# ==============================
+# Experiment tracking / outputs
+# ==============================
+artifacts/
+mlruns/
+
+# ==============================
+# Model files
+# ==============================
+*.joblib
+*.pkl
+*.bin
+*.dll
+
+# ==============================
+# Data (do not push local datasets)
+# ==============================
+data/raw/*
+data/interim/*
+data/processed/*
+data/external/*
+
+# Keep folder structure
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
+!data/external/.gitkeep

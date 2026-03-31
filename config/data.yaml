@@ -1,0 +1,22 @@
+# Configuration for raw and external data files
+
+raw_data:
+  season_files:
+    - B1920.csv
+    - B2021.csv
+    - B2122.csv
+    - B2223.csv
+    - B2324.csv
+
+external_data:
+  league_position_file: League_position.ods
+
+columns:
+  date_column: Date
+  time_column: Time
+  home_team_column: HomeTeam
+  away_team_column: AwayTeam
+  target_column: FTR
+
+split:
+  test_start_date: "2023-07-28"
