@@ -1,5 +1,5 @@
 """
-Execution script for training-only class resampling.
+Execution script for training-only SMOTE resampling.
 
 Inputs:
     data/processed/X_train_processed.csv
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.data.resampling import oversample_target_classes
+from src.data.resampling import apply_smote
 
 
 X_TRAIN_PATH = Path("data/processed/X_train_processed.csv")
@@ -38,11 +38,12 @@ def main() -> None:
     print("Original class distribution:")
     print(y_train.value_counts())
 
-    X_resampled, y_resampled = oversample_target_classes(
+    X_resampled, y_resampled = apply_smote(
         X_train=X_train,
         y_train=y_train,
-        target_classes=["D"],  # notebook parity: oversample draw class
+        sampling_strategy="not majority",
         random_state=42,
+        k_neighbors=5,
     )
 
     X_RESAMPLED_OUT.parent.mkdir(parents=True, exist_ok=True)
@@ -52,7 +53,7 @@ def main() -> None:
     print("\nResampled class distribution:")
     print(y_resampled.value_counts())
 
-    print("\nResampling completed.")
+    print("\nSMOTE resampling completed.")
     print(f"X_train original shape  : {X_train.shape}")
     print(f"X_train resampled shape : {X_resampled.shape}")
     print(f"Saved features          : {X_RESAMPLED_OUT}")
