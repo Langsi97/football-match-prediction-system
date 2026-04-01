@@ -1,11 +1,19 @@
 """
 Feature audit and final dataset preparation.
 
-Purpose:
+Purpose
+-------
 - validate dataset integrity before modeling
-- handle missing values
-- ensure no leakage columns remain
-- produce final modeling-ready dataset
+- report duplicate rows
+- report missing values
+- preserve raw engineered missingness for pipeline imputation
+- produce final modeling-ready dataset without global fillna
+
+Important
+---------
+This module does NOT impute missing values.
+Missing value handling is deferred to the preprocessing pipeline
+(SimpleImputer fitted on training data only).
 """
 
 from __future__ import annotations
@@ -14,25 +22,52 @@ import pandas as pd
 
 
 def run_feature_audit(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Run basic dataset integrity checks before modeling.
+
+    Parameters
+    ----------
+    df : pd.DataFrame
+        Engineered feature dataset.
+
+    Returns
+    -------
+    pd.DataFrame
+        Unmodified audited dataframe.
+
+    Raises
+    ------
+    ValueError
+        If duplicate rows are detected or row count changes unexpectedly.
+    """
     result = df.copy()
+    original_row_count = len(result)
 
-    original_rows = len(result)
+    # 1. Duplicate row check
+    duplicate_count = int(result.duplicated().sum())
+    if duplicate_count > 0:
+        raise ValueError(f"Duplicate rows detected in dataset: {duplicate_count}")
 
-    # 1. Basic checks
-    if result.duplicated().any():
-        raise ValueError("Duplicate rows detected in dataset.")
-
-    # 2. Missing values check
+    # 2. Missing value summary
     missing_summary = result.isna().sum().sort_values(ascending=False)
+    missing_summary = missing_summary[missing_summary > 0]
 
-    print("\nTop missing columns:")
-    print(missing_summary.head(10))
+    print("\n=== Feature Audit Summary ===")
+    print(f"Row count    : {len(result)}")
+    print(f"Column count : {result.shape[1]}")
+    print(f"Duplicates   : {duplicate_count}")
 
-    # 3. Fill missing values (production decision)
-    result = result.fillna(0)
+    if missing_summary.empty:
+        print("\nNo missing values detected.")
+    else:
+        print("\nColumns with missing values:")
+        print(missing_summary)
 
-    # 4. Final validation
-    if len(result) != original_rows:
-        raise ValueError("Row count changed after audit.")
+    # 3. Final row integrity check
+    if len(result) != original_row_count:
+        raise ValueError(
+            f"Row count changed during feature audit: "
+            f"{original_row_count} -> {len(result)}"
+        )
 
     return result

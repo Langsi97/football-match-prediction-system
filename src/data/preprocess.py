@@ -14,59 +14,47 @@ def trim_columns_up_to_avg_a(df: pd.DataFrame) -> pd.DataFrame:
     """
     Keep only columns up to and including 'AvgA'.
 
-    This matches your thesis logic, where columns after the bookmaker
-    average away odds were not needed for the base dataset.
-
     Parameters
     ----------
     df : pd.DataFrame
-        Input dataframe.
 
     Returns
     -------
     pd.DataFrame
-        Trimmed dataframe.
     """
     if "AvgA" not in df.columns:
         raise KeyError("'AvgA' column not found in dataframe.")
 
     end_index = df.columns.get_loc("AvgA")
-    trimmed_df = df.iloc[:, : end_index + 1].copy()
-    return trimmed_df
+    return df.iloc[:, : end_index + 1].copy()
 
 
 def drop_irrelevant_columns(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Drop columns that are not needed in the pre-match base dataset.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input dataframe.
-
-    Returns
-    -------
-    pd.DataFrame
-        Dataframe after removing irrelevant columns.
+    Drop columns not needed in pre-match dataset.
     """
     columns_to_drop = ["HTHG", "HTAG", "HTR"]
     existing_columns = [col for col in columns_to_drop if col in df.columns]
     return df.drop(columns=existing_columns).copy()
 
 
+def remove_bookmaker_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Remove all bookmaker-related columns to prevent leakage.
+
+    Removes columns starting with:
+    B365, BW, IW, PS, WH, VC, Avg, Max
+    """
+    bookmaker_prefixes = ("B365", "BW", "IW", "PS", "WH", "VC", "Avg", "Max")
+
+    cols_to_drop = [col for col in df.columns if col.startswith(bookmaker_prefixes)]
+
+    return df.drop(columns=cols_to_drop).copy()
+
+
 def preprocess_date_and_time(df: pd.DataFrame) -> pd.DataFrame:
     """
     Convert match date to datetime and extract hour from time.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input dataframe.
-
-    Returns
-    -------
-    pd.DataFrame
-        Dataframe with cleaned Date and Hour columns.
     """
     processed_df = df.copy()
 
@@ -89,16 +77,6 @@ def preprocess_date_and_time(df: pd.DataFrame) -> pd.DataFrame:
 def assign_season(date_value: pd.Timestamp) -> str | None:
     """
     Assign a season label based on match date.
-
-    Parameters
-    ----------
-    date_value : pd.Timestamp
-        Match date.
-
-    Returns
-    -------
-    str | None
-        Season label or None if outside supported ranges.
     """
     if pd.isna(date_value):
         return None
@@ -120,18 +98,28 @@ def assign_season(date_value: pd.Timestamp) -> str | None:
 
 def add_season_column(df: pd.DataFrame) -> pd.DataFrame:
     """
-    Add a season label column from the Date column.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input dataframe.
-
-    Returns
-    -------
-    pd.DataFrame
-        Dataframe with Season column.
+    Add a season label column.
     """
     processed_df = df.copy()
     processed_df["Season"] = processed_df["Date"].apply(assign_season)
     return processed_df
+
+
+def run_base_preprocessing(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Full base preprocessing pipeline.
+
+    Order is important:
+    1. Trim columns
+    2. Remove bookmaker data
+    3. Drop irrelevant columns
+    4. Process date/time
+    5. Add season
+    """
+    df = trim_columns_up_to_avg_a(df)
+    df = remove_bookmaker_columns(df)   # 🔥 critical step
+    df = drop_irrelevant_columns(df)
+    df = preprocess_date_and_time(df)
+    df = add_season_column(df)
+
+    return df
