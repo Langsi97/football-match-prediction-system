@@ -1,61 +1,20 @@
 """
-Rolling feature engineering for Belgian Pro League match data.
+Rolling feature engineering for football match data.
 
-This module builds leakage-free 3-match rolling averages for team performance
-statistics. The implementation is team-centric:
+This module builds leakage-free rolling averages for team performance
+statistics. The rolling window is configurable so training and inference
+can share the same historical definition.
 
-1. Each match is expanded into two rows:
-   - one row from the home team's perspective
-   - one row from the away team's perspective
-
-2. Features are shifted by 1 match before rolling, so the current match is
-   never included in its own feature calculation.
-
-3. The engineered rolling features are merged back into the original
-   match-level dataset as:
-   - Home_<feature>_roll3
-   - Away_<feature>_roll3
-
-This module is designed for production ML pipelines:
-- explicit validation
-- deterministic ordering
-- no target leakage
-- reusable functions
+Output columns follow:
+- Home_<Metric>_roll{window}
+- Away_<Metric>_roll{window}
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import List, Tuple
+from typing import Tuple, List
 
 import pandas as pd
-
-
-ROLLING_WINDOW = 5
-
-
-@dataclass(frozen=True)
-class RollingFeatureSpec:
-    """
-    Defines how home/away raw match columns map into generic team-centric metrics.
-    """
-
-    generic_name: str
-    home_for: str
-    home_against: str
-    away_for: str
-    away_against: str
-
-
-ROLLING_FEATURE_SPECS: List[RollingFeatureSpec] = [
-    RollingFeatureSpec("Goals", "FTHG", "FTAG", "FTAG", "FTHG"),
-    RollingFeatureSpec("Shots", "HS", "AS", "AS", "HS"),
-    RollingFeatureSpec("ShotsOnTarget", "HST", "AST", "AST", "HST"),
-    RollingFeatureSpec("Fouls", "HF", "AF", "AF", "HF"),
-    RollingFeatureSpec("Corners", "HC", "AC", "AC", "HC"),
-    RollingFeatureSpec("YellowCards", "HY", "AY", "AY", "HY"),
-    RollingFeatureSpec("RedCards", "HR", "AR", "AR", "HR"),
-]
 
 
 REQUIRED_COLUMNS = {
@@ -79,31 +38,31 @@ REQUIRED_COLUMNS = {
 }
 
 
+TEAM_METRIC_COLUMNS = [
+    "GoalsFor",
+    "GoalsAgainst",
+    "ShotsFor",
+    "ShotsAgainst",
+    "ShotsOnTargetFor",
+    "ShotsOnTargetAgainst",
+    "FoulsFor",
+    "FoulsAgainst",
+    "CornersFor",
+    "CornersAgainst",
+    "YellowCardsFor",
+    "YellowCardsAgainst",
+    "RedCardsFor",
+    "RedCardsAgainst",
+]
+
+
 def validate_required_columns(df: pd.DataFrame, required_columns: set[str]) -> None:
-    """
-    Validate that the dataframe contains all required columns.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input dataframe.
-    required_columns : set[str]
-        Required column names.
-
-    Raises
-    ------
-    ValueError
-        If one or more required columns are missing.
-    """
     missing = sorted(required_columns - set(df.columns))
     if missing:
         raise ValueError(f"Missing required columns: {missing}")
 
 
 def _build_home_team_view(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Build a team-centric dataframe from the home team's perspective.
-    """
     home_df = df[
         [
             "MatchID",
@@ -150,9 +109,6 @@ def _build_home_team_view(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _build_away_team_view(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Build a team-centric dataframe from the away team's perspective.
-    """
     away_df = df[
         [
             "MatchID",
@@ -199,19 +155,6 @@ def _build_away_team_view(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_team_centric_match_table(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Convert match-level data into a team-centric table with one row per team per match.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Match-level dataframe.
-
-    Returns
-    -------
-    pd.DataFrame
-        Team-centric dataframe with both home and away team perspectives.
-    """
     validate_required_columns(df, REQUIRED_COLUMNS)
 
     working_df = df.copy()
@@ -227,99 +170,36 @@ def build_team_centric_match_table(df: pd.DataFrame) -> pd.DataFrame:
     away_df = _build_away_team_view(working_df)
 
     team_df = pd.concat([home_df, away_df], axis=0, ignore_index=True)
+    team_df = team_df.sort_values(["Team", "Date", "MatchID"]).reset_index(drop=True)
 
-    # Deterministic ordering is important for reproducibility.
-    team_df = team_df.sort_values(["Team", "Date", "MatchID"], ascending=[True, True, True]).reset_index(drop=True)
     return team_df
 
 
-def add_rolling_features(
-    team_df: pd.DataFrame,
-    rolling_window: int = ROLLING_WINDOW,
-) -> pd.DataFrame:
+def add_rolling_features(team_df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
     """
-    Add shifted rolling mean features to the team-centric dataframe.
-
-    Parameters
-    ----------
-    team_df : pd.DataFrame
-        Team-centric dataframe.
-    rolling_window : int, default=3
-        Number of previous matches to include in the rolling average.
-
-    Returns
-    -------
-    pd.DataFrame
-        Team-centric dataframe with rolling features added.
+    Add leakage-free rolling means using only previous matches.
     """
-    rolling_input_columns = [
-        "GoalsFor",
-        "GoalsAgainst",
-        "ShotsFor",
-        "ShotsAgainst",
-        "ShotsOnTargetFor",
-        "ShotsOnTargetAgainst",
-        "FoulsFor",
-        "FoulsAgainst",
-        "CornersFor",
-        "CornersAgainst",
-        "YellowCardsFor",
-        "YellowCardsAgainst",
-        "RedCardsFor",
-        "RedCardsAgainst",
-    ]
-
-    for col in rolling_input_columns:
-        if col not in team_df.columns:
-            raise ValueError(f"Expected rolling input column '{col}' not found.")
-
     result = team_df.copy()
 
-    # Shift by 1 before rolling to ensure causal, leakage-free features.
-    result[rolling_input_columns] = (
-        result.groupby("Team", group_keys=False)[rolling_input_columns]
-        .transform(lambda s: s.shift(1).rolling(window=rolling_window, min_periods=1).mean())
+    result[TEAM_METRIC_COLUMNS] = (
+        result.groupby("Team", group_keys=False)[TEAM_METRIC_COLUMNS]
+        .transform(lambda s: s.shift(1).rolling(window=window, min_periods=1).mean())
     )
 
     return result
 
 
-def split_home_away_rolling_features(team_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
-    """
-    Split team-centric rolling features back into home and away match-level features.
+def split_home_away_rolling_features(
+    team_df: pd.DataFrame,
+    window: int = 5,
+) -> Tuple[pd.DataFrame, pd.DataFrame]:
+    suffix = f"_roll{window}"
 
-    Parameters
-    ----------
-    team_df : pd.DataFrame
-        Team-centric dataframe containing rolling features.
+    home_df = team_df.loc[team_df["Venue"] == "Home", ["MatchID"] + TEAM_METRIC_COLUMNS].copy()
+    away_df = team_df.loc[team_df["Venue"] == "Away", ["MatchID"] + TEAM_METRIC_COLUMNS].copy()
 
-    Returns
-    -------
-    tuple[pd.DataFrame, pd.DataFrame]
-        (home_features_df, away_features_df)
-    """
-    rolling_columns = [
-        "GoalsFor",
-        "GoalsAgainst",
-        "ShotsFor",
-        "ShotsAgainst",
-        "ShotsOnTargetFor",
-        "ShotsOnTargetAgainst",
-        "FoulsFor",
-        "FoulsAgainst",
-        "CornersFor",
-        "CornersAgainst",
-        "YellowCardsFor",
-        "YellowCardsAgainst",
-        "RedCardsFor",
-        "RedCardsAgainst",
-    ]
-
-    home_df = team_df.loc[team_df["Venue"] == "Home", ["MatchID"] + rolling_columns].copy()
-    away_df = team_df.loc[team_df["Venue"] == "Away", ["MatchID"] + rolling_columns].copy()
-
-    home_df = home_df.rename(columns={col: f"Home_{col}_roll3" for col in rolling_columns})
-    away_df = away_df.rename(columns={col: f"Away_{col}_roll3" for col in rolling_columns})
+    home_df = home_df.rename(columns={col: f"Home_{col}{suffix}" for col in TEAM_METRIC_COLUMNS})
+    away_df = away_df.rename(columns={col: f"Away_{col}{suffix}" for col in TEAM_METRIC_COLUMNS})
 
     return home_df, away_df
 
@@ -329,63 +209,33 @@ def merge_rolling_features_back(
     home_roll_df: pd.DataFrame,
     away_roll_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """
-    Merge home and away rolling features back into the original match dataframe.
+    result = matches_df.copy()
 
-    Parameters
-    ----------
-    matches_df : pd.DataFrame
-        Original match dataframe.
-    home_roll_df : pd.DataFrame
-        Home rolling features by MatchID.
-    away_roll_df : pd.DataFrame
-        Away rolling features by MatchID.
+    if "MatchID" not in result.columns:
+        result["MatchID"] = range(len(result))
 
-    Returns
-    -------
-    pd.DataFrame
-        Final dataframe with rolling features added.
-    """
-    merged = matches_df.copy()
+    original_row_count = len(result)
 
-    if "MatchID" not in merged.columns:
-        merged["MatchID"] = range(len(merged))
+    result = result.merge(home_roll_df, on="MatchID", how="left")
+    result = result.merge(away_roll_df, on="MatchID", how="left")
 
-    original_row_count = len(merged)
-
-    merged = merged.merge(home_roll_df, on="MatchID", how="left")
-    merged = merged.merge(away_roll_df, on="MatchID", how="left")
-
-    if len(merged) != original_row_count:
+    if len(result) != original_row_count:
         raise ValueError(
-            f"Row count changed after rolling feature merge: "
-            f"{original_row_count} -> {len(merged)}"
+            f"Row count changed after rolling feature merge: {original_row_count} -> {len(result)}"
         )
 
-    return merged
+    return result
 
 
-def build_rolling_feature_dataset(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    End-to-end builder for rolling features.
-
-    Parameters
-    ----------
-    df : pd.DataFrame
-        Input match-level dataframe.
-
-    Returns
-    -------
-    pd.DataFrame
-        Match-level dataframe enriched with rolling features.
-    """
+def build_rolling_feature_dataset(df: pd.DataFrame, window: int = 5) -> pd.DataFrame:
     working_df = df.copy()
+
     if "MatchID" not in working_df.columns:
         working_df["MatchID"] = range(len(working_df))
 
     team_df = build_team_centric_match_table(working_df)
-    team_df = add_rolling_features(team_df, rolling_window=ROLLING_WINDOW)
-    home_roll_df, away_roll_df = split_home_away_rolling_features(team_df)
+    team_df = add_rolling_features(team_df, window=window)
+    home_roll_df, away_roll_df = split_home_away_rolling_features(team_df, window=window)
 
     final_df = merge_rolling_features_back(working_df, home_roll_df, away_roll_df)
 

@@ -1,5 +1,5 @@
 """
-Execution script for building 3-match rolling features.
+Execution script for rolling feature generation.
 
 Input:
     data/processed/matches_enriched_with_positions.csv
@@ -19,6 +19,7 @@ from src.features.rolling_features import build_rolling_feature_dataset
 
 INPUT_PATH = Path("data/processed/matches_enriched_with_positions.csv")
 OUTPUT_PATH = Path("data/processed/matches_with_rolling_features.csv")
+ROLLING_WINDOW = 5
 
 
 def main() -> None:
@@ -28,7 +29,7 @@ def main() -> None:
     df = pd.read_csv(INPUT_PATH)
     original_rows = len(df)
 
-    output_df = build_rolling_feature_dataset(df)
+    output_df = build_rolling_feature_dataset(df, window=ROLLING_WINDOW)
 
     if len(output_df) != original_rows:
         raise ValueError(
@@ -39,13 +40,14 @@ def main() -> None:
     OUTPUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     output_df.to_csv(OUTPUT_PATH, index=False)
 
-    new_columns = [col for col in output_df.columns if col.endswith("_roll3")]
+    new_columns = [col for col in output_df.columns if col.endswith(f"_roll{ROLLING_WINDOW}")]
 
     print("Rolling features generated successfully.")
+    print(f"Window      : {ROLLING_WINDOW}")
     print(f"Input shape : {df.shape}")
     print(f"Output shape: {output_df.shape}")
-    print(f"Rolling columns added: {len(new_columns)}")
-    print(f"Saved to: {OUTPUT_PATH}")
+    print(f"Added cols  : {len(new_columns)}")
+    print(f"Saved to    : {OUTPUT_PATH}")
 
 
 if __name__ == "__main__":
