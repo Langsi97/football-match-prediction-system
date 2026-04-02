@@ -1,8 +1,12 @@
 """
-Input schema for Streamlit/manual entry.
+Final UI input schema for Streamlit.
 
-This module defines the exact last-5-match statistics the UI will collect
-from the user and maps them to model feature names.
+This module defines which user-entered fields the app will collect
+and how they map into the model's feature space.
+
+Important:
+- This version focuses on the screenshot-style last-5 stats input.
+- Additional engineered fields required by the model are also included.
 """
 
 from __future__ import annotations
@@ -13,46 +17,65 @@ import pandas as pd
 
 
 UI_TO_MODEL_FEATURE_MAP: Dict[str, str] = {
-    # Home team
-    "home_goals_scored_last5": "Home_GoalsFor_roll5",
-    "home_goals_conceded_last5": "Home_GoalsAgainst_roll5",
-    "home_shots_off_target_last5": "Home_ShotsAgainst_roll5",  # optional adjust if you model exact off-target separately
-    "home_shots_on_target_last5": "Home_ShotsOnTargetFor_roll5",
-    "home_corners_last5": "Home_CornersFor_roll5",
-    "home_cards_last5": "Home_YellowCardsFor_roll5",
-
-    # Away team
-    "away_goals_scored_last5": "Away_GoalsFor_roll5",
-    "away_goals_conceded_last5": "Away_GoalsAgainst_roll5",
-    "away_shots_off_target_last5": "Away_ShotsAgainst_roll5",
-    "away_shots_on_target_last5": "Away_ShotsOnTargetFor_roll5",
-    "away_corners_last5": "Away_CornersFor_roll5",
-    "away_cards_last5": "Away_YellowCardsFor_roll5",
-
-    # Additional engineered inputs still needed by your model
+    # Meta / context
+    "hour": "Hour",
+    "home_pre_position": "Home_pre_po",
+    "away_pre_position": "Away_pre_po",
     "home_form": "HomeTeam_Form",
     "away_form": "AwayTeam_Form",
     "home_advantage": "HomeTeam_HomeAdvantage",
-    "home_pre_position": "Home_pre_po",
-    "away_pre_position": "Away_pre_po",
-    "hour": "Hour",
+
+    # Home team last-5
+    "home_goals_scored_last5": "Home_GoalsFor_roll5",
+    "home_goals_conceded_last5": "Home_GoalsAgainst_roll5",
+    "home_shots_for_last5": "Home_ShotsFor_roll5",
+    "home_shots_against_last5": "Home_ShotsAgainst_roll5",
+    "home_shots_on_target_for_last5": "Home_ShotsOnTargetFor_roll5",
+    "home_shots_on_target_against_last5": "Home_ShotsOnTargetAgainst_roll5",
+    "home_fouls_for_last5": "Home_FoulsFor_roll5",
+    "home_fouls_against_last5": "Home_FoulsAgainst_roll5",
+    "home_corners_for_last5": "Home_CornersFor_roll5",
+    "home_corners_against_last5": "Home_CornersAgainst_roll5",
+    "home_yellow_cards_for_last5": "Home_YellowCardsFor_roll5",
+    "home_yellow_cards_against_last5": "Home_YellowCardsAgainst_roll5",
+    "home_red_cards_for_last5": "Home_RedCardsFor_roll5",
+    "home_red_cards_against_last5": "Home_RedCardsAgainst_roll5",
+
+    # Away team last-5
+    "away_goals_scored_last5": "Away_GoalsFor_roll5",
+    "away_goals_conceded_last5": "Away_GoalsAgainst_roll5",
+    "away_shots_for_last5": "Away_ShotsFor_roll5",
+    "away_shots_against_last5": "Away_ShotsAgainst_roll5",
+    "away_shots_on_target_for_last5": "Away_ShotsOnTargetFor_roll5",
+    "away_shots_on_target_against_last5": "Away_ShotsOnTargetAgainst_roll5",
+    "away_fouls_for_last5": "Away_FoulsFor_roll5",
+    "away_fouls_against_last5": "Away_FoulsAgainst_roll5",
+    "away_corners_for_last5": "Away_CornersFor_roll5",
+    "away_corners_against_last5": "Away_CornersAgainst_roll5",
+    "away_yellow_cards_for_last5": "Away_YellowCardsFor_roll5",
+    "away_yellow_cards_against_last5": "Away_YellowCardsAgainst_roll5",
+    "away_red_cards_for_last5": "Away_RedCardsFor_roll5",
+    "away_red_cards_against_last5": "Away_RedCardsAgainst_roll5",
 }
+
+
+def required_ui_fields() -> List[str]:
+    """
+    Return the list of required Streamlit input fields.
+    """
+    return list(UI_TO_MODEL_FEATURE_MAP.keys())
 
 
 def build_feature_ready_row(user_inputs: Dict[str, float]) -> pd.DataFrame:
     """
-    Convert Streamlit form inputs into a single-row dataframe
-    using model feature names.
+    Convert user inputs into a single-row dataframe
+    with model feature names.
     """
-    renamed = {}
+    row = {}
 
-    for ui_name, model_name in UI_TO_MODEL_FEATURE_MAP.items():
-        if ui_name not in user_inputs:
-            raise ValueError(f"Missing required UI input: {ui_name}")
-        renamed[model_name] = user_inputs[ui_name]
+    for ui_field, model_feature in UI_TO_MODEL_FEATURE_MAP.items():
+        if ui_field not in user_inputs:
+            raise ValueError(f"Missing required UI field: {ui_field}")
+        row[model_feature] = user_inputs[ui_field]
 
-    return pd.DataFrame([renamed])
-
-
-def required_ui_fields() -> List[str]:
-    return list(UI_TO_MODEL_FEATURE_MAP.keys())
+    return pd.DataFrame([row])
