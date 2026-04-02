@@ -64,10 +64,10 @@ def bookmaker_implied_probability(odds: float) -> float:
 
 def explain_bias(probability_gap: float) -> str:
     if probability_gap > 0.03:
-        return "Model probability is higher than the bookmaker market probability. This may indicate potential value from the model's view."
+        return "The model rates this outcome higher than the bookmaker market. This may indicate possible value."
     if probability_gap < -0.03:
-        return "Bookmaker probability is higher than the model probability. The market may be pricing this outcome more aggressively."
-    return "Model and bookmaker are broadly aligned for this outcome."
+        return "The bookmaker market rates this outcome higher than the model. The outcome may be overpriced by the market."
+    return "The model and bookmaker are relatively aligned for this outcome."
 
 
 def team_input_block(prefix: str, label: str, key_prefix: str) -> str:
@@ -79,20 +79,18 @@ def team_input_block(prefix: str, label: str, key_prefix: str) -> str:
     )
 
     if mode == "Select from list":
-        team_name = st.selectbox(
+        return st.selectbox(
             label,
             JPL_TEAMS,
             key=f"{key_prefix}_{prefix}_team_select",
         )
-    else:
-        team_name = st.text_input(
-            label,
-            value="",
-            placeholder="Type team name",
-            key=f"{key_prefix}_{prefix}_team_text",
-        ).strip()
 
-    return team_name
+    return st.text_input(
+        label,
+        value="",
+        placeholder="Type team name",
+        key=f"{key_prefix}_{prefix}_team_text",
+    ).strip()
 
 
 def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
@@ -102,78 +100,34 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
     values = {}
 
     values[f"{prefix}_goals_scored_last5"] = c1.number_input(
-        "Goals registered",
-        min_value=0.0,
-        value=1.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_goals_registered",
+        "Goals registered", min_value=0.0, value=1.0, step=0.1, key=f"{key_prefix}_{prefix}_goals_registered"
     )
     values[f"{prefix}_goals_conceded_last5"] = c2.number_input(
-        "Goals conceded",
-        min_value=0.0,
-        value=1.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_goals_conceded",
+        "Goals conceded", min_value=0.0, value=1.0, step=0.1, key=f"{key_prefix}_{prefix}_goals_conceded"
     )
-
     values[f"{prefix}_shots_for_last5"] = c1.number_input(
-        "Shots registered",
-        min_value=0.0,
-        value=4.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_shots_registered",
+        "Shots registered", min_value=0.0, value=4.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_registered"
     )
     values[f"{prefix}_shots_against_last5"] = c2.number_input(
-        "Shots conceded",
-        min_value=0.0,
-        value=4.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_shots_conceded",
+        "Shots conceded", min_value=0.0, value=4.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_conceded"
     )
-
     values[f"{prefix}_shots_on_target_for_last5"] = c1.number_input(
-        "Shots on target registered",
-        min_value=0.0,
-        value=2.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_shots_ot_registered",
+        "Shots on target registered", min_value=0.0, value=2.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_ot_registered"
     )
     values[f"{prefix}_shots_on_target_against_last5"] = c2.number_input(
-        "Shots on target conceded",
-        min_value=0.0,
-        value=2.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_shots_ot_conceded",
+        "Shots on target conceded", min_value=0.0, value=2.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_ot_conceded"
     )
-
     values[f"{prefix}_fouls_for_last5"] = c1.number_input(
-        "Fouls registered",
-        min_value=0.0,
-        value=10.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_fouls_registered",
+        "Fouls registered", min_value=0.0, value=10.0, step=0.1, key=f"{key_prefix}_{prefix}_fouls_registered"
     )
     values[f"{prefix}_fouls_against_last5"] = c2.number_input(
-        "Fouls conceded",
-        min_value=0.0,
-        value=10.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_fouls_conceded",
+        "Fouls conceded", min_value=0.0, value=10.0, step=0.1, key=f"{key_prefix}_{prefix}_fouls_conceded"
     )
-
     values[f"{prefix}_corners_for_last5"] = c1.number_input(
-        "Corners registered",
-        min_value=0.0,
-        value=5.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_corners_registered",
+        "Corners registered", min_value=0.0, value=5.0, step=0.1, key=f"{key_prefix}_{prefix}_corners_registered"
     )
     values[f"{prefix}_corners_against_last5"] = c2.number_input(
-        "Corners conceded",
-        min_value=0.0,
-        value=5.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_corners_conceded",
+        "Corners conceded", min_value=0.0, value=5.0, step=0.1, key=f"{key_prefix}_{prefix}_corners_conceded"
     )
 
     return values
@@ -185,25 +139,16 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
 
     with c1:
         home_team = team_input_block("home", "Home Team", key_prefix)
-
     with c2:
         away_team = team_input_block("away", "Away Team", key_prefix)
 
     c3, c4, c5, c6 = st.columns(4)
     matchday = c3.number_input("Matchday", min_value=1, max_value=40, value=10, step=1, key=f"{key_prefix}_matchday")
-    home_pre_position = c4.number_input(
-        "Home pre-match position", min_value=1, max_value=20, value=6, step=1, key=f"{key_prefix}_home_pre_position"
-    )
-    away_pre_position = c5.number_input(
-        "Away pre-match position", min_value=1, max_value=20, value=10, step=1, key=f"{key_prefix}_away_pre_position"
-    )
-    home_form = c6.number_input(
-        "Home form (0-1)", min_value=0.0, max_value=1.0, value=0.50, step=0.01, key=f"{key_prefix}_home_form"
-    )
+    home_pre_position = c4.number_input("Home pre-match position", min_value=1, max_value=20, value=6, step=1, key=f"{key_prefix}_home_pre_position")
+    away_pre_position = c5.number_input("Away pre-match position", min_value=1, max_value=20, value=10, step=1, key=f"{key_prefix}_away_pre_position")
+    home_form = c6.number_input("Home form (0-1)", min_value=0.0, max_value=1.0, value=0.50, step=0.01, key=f"{key_prefix}_home_form")
 
-    away_form = st.number_input(
-        "Away form (0-1)", min_value=0.0, max_value=1.0, value=0.50, step=0.01, key=f"{key_prefix}_away_form"
-    )
+    away_form = st.number_input("Away form (0-1)", min_value=0.0, max_value=1.0, value=0.50, step=0.01, key=f"{key_prefix}_away_form")
 
     st.markdown("---")
 
@@ -251,7 +196,7 @@ def validate_teams(home_team: str, away_team: str) -> None:
 
 
 st.title("⚽ Jupiler Pro League Match Prediction System")
-st.caption("Belgian Jupiler Pro League focused. You can select a team from the list or type a custom team name manually.")
+st.caption("Belgian Jupiler Pro League focused. Enter match features on page 1, then analyse bookmaker bias on page 2.")
 
 tab1, tab2 = st.tabs(["Match Prediction", "Analyse Bookmaker Bias"])
 
@@ -268,6 +213,7 @@ with tab1:
             st.session_state["latest_prediction_results"] = results
             st.session_state["latest_home_team"] = home_team
             st.session_state["latest_away_team"] = away_team
+            st.session_state["latest_prediction_ready"] = True
 
             st.success(f"Predicted outcome for {home_team} vs {away_team}: {row['prediction']}")
 
@@ -292,99 +238,90 @@ with tab1:
             st.error(f"Prediction failed: {e}")
 
 with tab2:
-    st.subheader("Fixture")
-    c1, c2 = st.columns(2)
-
-    home_team_bias = c1.text_input(
-        "Home Team",
-        value=st.session_state.get("latest_home_team", ""),
-        key="bias_home_team",
-        placeholder="Type home team",
-    )
-    away_team_bias = c2.text_input(
-        "Away Team",
-        value=st.session_state.get("latest_away_team", ""),
-        key="bias_away_team",
-        placeholder="Type away team",
-    )
-
-    st.subheader("Insert Bookmaker Odds")
-    b1, b2, b3 = st.columns(3)
-    bookmaker_home_odds = b1.number_input(
-        "Bookmaker Home Win Odds", min_value=1.01, value=2.10, step=0.01, key="bias_home_odds"
-    )
-    bookmaker_draw_odds = b2.number_input(
-        "Bookmaker Draw Odds", min_value=1.01, value=3.40, step=0.01, key="bias_draw_odds"
-    )
-    bookmaker_away_odds = b3.number_input(
-        "Bookmaker Away Win Odds", min_value=1.01, value=3.60, step=0.01, key="bias_away_odds"
-    )
-
-    if "latest_prediction_results" not in st.session_state:
-        st.info("Please use the Match Prediction page first. The bookmaker analysis page uses the latest prediction probabilities from that page.")
+    if not st.session_state.get("latest_prediction_ready", False):
+        st.info("Please complete a prediction on the Match Prediction page first.")
     else:
-        try:
-            validate_teams(home_team_bias, away_team_bias)
+        home_team = st.session_state.get("latest_home_team", "")
+        away_team = st.session_state.get("latest_away_team", "")
+        results = st.session_state.get("latest_prediction_results")
 
-            results = st.session_state["latest_prediction_results"]
-            row = results.iloc[0]
+        st.subheader("Fixture")
+        c1, c2 = st.columns(2)
+        c1.text_input("Home Team", value=home_team, disabled=True, key="bias_home_team_display")
+        c2.text_input("Away Team", value=away_team, disabled=True, key="bias_away_team_display")
 
-            model_prob_h = float(row.get("prob_H", 0))
-            model_prob_d = float(row.get("prob_D", 0))
-            model_prob_a = float(row.get("prob_A", 0))
+        st.subheader("Insert Bookmaker Odds")
+        b1, b2, b3 = st.columns(3)
+        bookmaker_home_odds = b1.number_input(
+            "Bookmaker Home Win Odds", min_value=1.01, value=2.10, step=0.01, key="bias_home_odds"
+        )
+        bookmaker_draw_odds = b2.number_input(
+            "Bookmaker Draw Odds", min_value=1.01, value=3.40, step=0.01, key="bias_draw_odds"
+        )
+        bookmaker_away_odds = b3.number_input(
+            "Bookmaker Away Win Odds", min_value=1.01, value=3.60, step=0.01, key="bias_away_odds"
+        )
 
-            model_odds_h = fair_odds_from_probability(model_prob_h)
-            model_odds_d = fair_odds_from_probability(model_prob_d)
-            model_odds_a = fair_odds_from_probability(model_prob_a)
+        if st.button("Submit Bookmaker Analysis", use_container_width=True, key="submit_bias_analysis"):
+            try:
+                row = results.iloc[0]
 
-            bookmaker_prob_h = bookmaker_implied_probability(bookmaker_home_odds)
-            bookmaker_prob_d = bookmaker_implied_probability(bookmaker_draw_odds)
-            bookmaker_prob_a = bookmaker_implied_probability(bookmaker_away_odds)
+                model_prob_h = float(row.get("prob_H", 0))
+                model_prob_d = float(row.get("prob_D", 0))
+                model_prob_a = float(row.get("prob_A", 0))
 
-            overround = bookmaker_prob_h + bookmaker_prob_d + bookmaker_prob_a - 1.0
+                model_odds_h = fair_odds_from_probability(model_prob_h)
+                model_odds_d = fair_odds_from_probability(model_prob_d)
+                model_odds_a = fair_odds_from_probability(model_prob_a)
 
-            total_implied = bookmaker_prob_h + bookmaker_prob_d + bookmaker_prob_a
-            norm_bookmaker_prob_h = bookmaker_prob_h / total_implied
-            norm_bookmaker_prob_d = bookmaker_prob_d / total_implied
-            norm_bookmaker_prob_a = bookmaker_prob_a / total_implied
+                bookmaker_prob_h = bookmaker_implied_probability(bookmaker_home_odds)
+                bookmaker_prob_d = bookmaker_implied_probability(bookmaker_draw_odds)
+                bookmaker_prob_a = bookmaker_implied_probability(bookmaker_away_odds)
 
-            gap_h = model_prob_h - norm_bookmaker_prob_h
-            gap_d = model_prob_d - norm_bookmaker_prob_d
-            gap_a = model_prob_a - norm_bookmaker_prob_a
+                overround = bookmaker_prob_h + bookmaker_prob_d + bookmaker_prob_a - 1.0
 
-            comparison_df = pd.DataFrame(
-                {
-                    "Outcome": ["Home", "Draw", "Away"],
-                    "Model Probability": [model_prob_h, model_prob_d, model_prob_a],
-                    "Model Fair Odds": [model_odds_h, model_odds_d, model_odds_a],
-                    "Bookmaker Odds": [bookmaker_home_odds, bookmaker_draw_odds, bookmaker_away_odds],
-                    "Bookmaker Implied Probability": [bookmaker_prob_h, bookmaker_prob_d, bookmaker_prob_a],
-                    "Bookmaker Normalized Probability": [norm_bookmaker_prob_h, norm_bookmaker_prob_d, norm_bookmaker_prob_a],
-                    "Probability Gap (Model - Bookmaker)": [gap_h, gap_d, gap_a],
-                    "Short Explanation": [explain_bias(gap_h), explain_bias(gap_d), explain_bias(gap_a)],
-                }
-            )
+                total_implied = bookmaker_prob_h + bookmaker_prob_d + bookmaker_prob_a
+                norm_bookmaker_prob_h = bookmaker_prob_h / total_implied
+                norm_bookmaker_prob_d = bookmaker_prob_d / total_implied
+                norm_bookmaker_prob_a = bookmaker_prob_a / total_implied
 
-            st.success(f"Bookmaker bias analysis for {home_team_bias} vs {away_team_bias}")
+                gap_h = model_prob_h - norm_bookmaker_prob_h
+                gap_d = model_prob_d - norm_bookmaker_prob_d
+                gap_a = model_prob_a - norm_bookmaker_prob_a
 
-            m1, m2, m3 = st.columns(3)
-            m1.metric("Predicted Outcome", row["prediction"])
-            m2.metric("Bookmaker Overround", f"{overround:.2%}")
-            m3.metric(
-                "Largest Model Edge",
-                comparison_df.loc[
-                    comparison_df["Probability Gap (Model - Bookmaker)"].idxmax(),
-                    "Outcome",
-                ],
-            )
+                comparison_df = pd.DataFrame(
+                    {
+                        "Outcome": ["Home", "Draw", "Away"],
+                        "Model Probability": [model_prob_h, model_prob_d, model_prob_a],
+                        "Model Fair Odds": [model_odds_h, model_odds_d, model_odds_a],
+                        "Bookmaker Odds": [bookmaker_home_odds, bookmaker_draw_odds, bookmaker_away_odds],
+                        "Bookmaker Implied Probability": [bookmaker_prob_h, bookmaker_prob_d, bookmaker_prob_a],
+                        "Bookmaker Normalized Probability": [norm_bookmaker_prob_h, norm_bookmaker_prob_d, norm_bookmaker_prob_a],
+                        "Probability Gap (Model - Bookmaker)": [gap_h, gap_d, gap_a],
+                        "Short Explanation": [explain_bias(gap_h), explain_bias(gap_d), explain_bias(gap_a)],
+                    }
+                )
 
-            st.subheader("Model vs Bookmaker Comparison")
-            st.dataframe(comparison_df, use_container_width=True)
+                st.success(f"Bookmaker bias analysis for {home_team} vs {away_team}")
 
-            st.info(
-                "Interpretation: the bookmaker edge is the overround, which is the total implied probability above 100%. "
-                "A positive probability gap means the model rates that outcome higher than the bookmaker's normalized market estimate."
-            )
+                m1, m2, m3 = st.columns(3)
+                m1.metric("Predicted Outcome", row["prediction"])
+                m2.metric("Bookmaker Overround", f"{overround:.2%}")
+                m3.metric(
+                    "Largest Model Edge",
+                    comparison_df.loc[
+                        comparison_df["Probability Gap (Model - Bookmaker)"].idxmax(),
+                        "Outcome",
+                    ],
+                )
 
-        except Exception as e:
-            st.error(f"Bias analysis failed: {e}")
+                st.subheader("Model vs Bookmaker Comparison")
+                st.dataframe(comparison_df, use_container_width=True)
+
+                st.info(
+                    "Interpretation: bookmaker edge is the overround, which is the total implied probability above 100%. "
+                    "A positive probability gap means the model rates that outcome higher than the bookmaker's normalized market estimate."
+                )
+
+            except Exception as e:
+                st.error(f"Bias analysis failed: {e}")
