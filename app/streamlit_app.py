@@ -97,6 +97,23 @@ def explain_overround(overround: float) -> str:
     )
 
 
+def explain_two_way_overround(overround: float) -> str:
+    if overround > 0:
+        return (
+            f"The 2-outcome market has a positive overround of {overround:.2%}. "
+            f"This means the bookmaker has an embedded edge of {overround:.2%} in this two-way market, regardless of the stake size."
+        )
+    if abs(overround) < 1e-12:
+        return (
+            "The 2-outcome market has an overround of 0.00%. "
+            "This means the market is fair in pricing terms because the total implied probability is exactly 100%."
+        )
+    return (
+        f"The 2-outcome market has a negative overround of {overround:.2%}. "
+        f"This may indicate a possible value or arbitrage-style pricing opportunity because the total implied probability is below 100%."
+    )
+
+
 def validate_teams(home_team: str, away_team: str) -> None:
     if not home_team:
         raise ValueError("Please provide a Home Team.")
@@ -461,6 +478,9 @@ elif st.session_state["current_page"] == "Analyse Bookmaker Bias":
         c1.text_input("Home Team", value=home_team, disabled=True, key="bias_home_team_display")
         c2.text_input("Away Team", value=away_team, disabled=True, key="bias_away_team_display")
 
+        # -----------------------------
+        # 3-outcome bookmaker analysis
+        # -----------------------------
         st.subheader("Insert Bookmaker Odds")
         b1, b2, b3 = st.columns(3)
         bookmaker_home_odds = b1.number_input(
@@ -524,7 +544,11 @@ elif st.session_state["current_page"] == "Analyse Bookmaker Bias":
                         "Bookmaker Implied Probability": [bookmaker_prob_h, bookmaker_prob_d, bookmaker_prob_a],
                         "Bookmaker Normalized Probability": [norm_bookmaker_prob_h, norm_bookmaker_prob_d, norm_bookmaker_prob_a],
                         "Probability Gap (Model - Bookmaker)": [gap_h, gap_d, gap_a],
-                        "Short Explanation": [explain_probability_gap(gap_h), explain_probability_gap(gap_d), explain_probability_gap(gap_a)],
+                        "Short Explanation": [
+                            explain_probability_gap(gap_h),
+                            explain_probability_gap(gap_d),
+                            explain_probability_gap(gap_a),
+                        ],
                     }
                 )
 
@@ -550,4 +574,77 @@ elif st.session_state["current_page"] == "Analyse Bookmaker Bias":
             except Exception as e:
                 st.error(f"Bias analysis failed: {e}")
 
+        # -----------------------------
+        # Bonus: 2-outcome overround
+        # -----------------------------
+        st.markdown("---")
+        st.subheader("Bonus: 2-Outcome Overround Calculator")
+        st.caption("Useful for markets such as Over/Under, Yes/No, or any two-way bookmaker market.")
+
+        t1, t2 = st.columns(2)
+        outcome_1_name = t1.text_input(
+            "Outcome 1 Name",
+            value="Over 2.5 Goals",
+            key="two_way_outcome_1_name",
+            help="Example: Over 2.5 Goals",
+        )
+        outcome_2_name = t2.text_input(
+            "Outcome 2 Name",
+            value="Under 2.5 Goals",
+            key="two_way_outcome_2_name",
+            help="Example: Under 2.5 Goals",
+        )
+
+        o1, o2 = st.columns(2)
+        outcome_1_odds = o1.number_input(
+            f"{outcome_1_name} Odds",
+            min_value=1.01,
+            value=1.85,
+            step=0.01,
+            key="two_way_outcome_1_odds",
+            help="Insert the decimal bookmaker odds for outcome 1.",
+        )
+        outcome_2_odds = o2.number_input(
+            f"{outcome_2_name} Odds",
+            min_value=1.01,
+            value=1.95,
+            step=0.01,
+            key="two_way_outcome_2_odds",
+            help="Insert the decimal bookmaker odds for outcome 2.",
+        )
+
+        if st.button("Calculate 2-Outcome Overround", use_container_width=True, key="two_way_overround_button"):
+            try:
+                prob_1 = bookmaker_implied_probability(outcome_1_odds)
+                prob_2 = bookmaker_implied_probability(outcome_2_odds)
+
+                two_way_overround = prob_1 + prob_2 - 1.0
+
+                total_two_way_prob = prob_1 + prob_2
+                norm_prob_1 = prob_1 / total_two_way_prob
+                norm_prob_2 = prob_2 / total_two_way_prob
+
+                two_way_df = pd.DataFrame(
+                    {
+                        "Outcome": [outcome_1_name, outcome_2_name],
+                        "Bookmaker Odds": [outcome_1_odds, outcome_2_odds],
+                        "Implied Probability": [prob_1, prob_2],
+                        "Normalized Probability": [norm_prob_1, norm_prob_2],
+                    }
+                )
+
+                st.success("2-outcome overround analysis completed.")
+
+                x1, x2 = st.columns(2)
+                x1.metric("2-Outcome Overround", f"{two_way_overround:.2%}")
+                x2.metric("Bookmaker Edge", f"{two_way_overround:.2%}")
+
+                st.dataframe(two_way_df, use_container_width=True)
+                st.info(explain_two_way_overround(two_way_overround))
+
+            except Exception as e:
+                st.error(f"2-outcome analysis failed: {e}")
+
     render_footer_navigation(show_previous=True, show_next=False)
+
+      
