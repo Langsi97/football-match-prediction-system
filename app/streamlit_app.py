@@ -50,6 +50,14 @@ DEFAULT_AWAY_RED_REGISTERED = 0.10
 DEFAULT_AWAY_RED_CONCEDED = 0.10
 
 
+if "current_page" not in st.session_state:
+    st.session_state["current_page"] = "Match Prediction"
+
+
+def go_to_page(page_name: str) -> None:
+    st.session_state["current_page"] = page_name
+
+
 def fair_odds_from_probability(prob: float) -> float:
     if prob <= 0:
         return float("inf")
@@ -64,7 +72,7 @@ def bookmaker_implied_probability(odds: float) -> float:
 
 def explain_probability_gap(probability_gap: float) -> str:
     if probability_gap > 0.03:
-        return "The model assigns a meaningfully higher probability than the bookmaker market. This outcome may offer potential value from the model's perspective."
+        return "The model assigns a meaningfully higher probability than the bookmaker market. This may indicate possible value from the model's perspective."
     if probability_gap < -0.03:
         return "The bookmaker market assigns a meaningfully higher probability than the model. This outcome may be overpriced by the market."
     return "The model and the bookmaker market are relatively aligned on this outcome."
@@ -74,20 +82,68 @@ def explain_overround(overround: float) -> str:
     if overround > 0:
         return (
             f"The overround is positive at {overround:.2%}. "
-            f"This means the bookmaker has an edge of {overround:.2%} built into the market, "
-            f"regardless of the stake size. In practice, the total implied probability is above 100%, "
-            f"so the market is priced in the bookmaker's favor."
+            f"This means the bookmaker has an edge of {overround:.2%} built into the market, regardless of stake size. "
+            f"The total implied probability is above 100%, so the quoted market is priced in the bookmaker's favor."
         )
     if abs(overround) < 1e-12:
         return (
-            "The overround is 0.00%. This means the market is fair in pricing terms, "
-            "because the total implied probability is exactly 100%. "
-            "There is no built-in bookmaker margin from the quoted odds alone."
+            "The overround is 0.00%. This means the market is fair in pricing terms because the total implied probability is exactly 100%. "
+            "There is no built-in bookmaker margin from the odds alone."
         )
     return (
         f"The overround is negative at {overround:.2%}. "
-        f"This means the total implied probability is below 100%, which may indicate a possible value-betting or arbitrage opportunity. "
+        f"This means the total implied probability is below 100%, so there may be a possible value-bet or arbitrage opportunity. "
         f"In simple terms, the quoted market may be underpriced rather than favoring the bookmaker."
+    )
+
+
+def validate_teams(home_team: str, away_team: str) -> None:
+    if not home_team:
+        raise ValueError("Please provide a Home Team.")
+    if not away_team:
+        raise ValueError("Please provide an Away Team.")
+    if home_team == away_team:
+        raise ValueError("Home Team and Away Team must be different.")
+
+
+def get_prediction_results(user_inputs: dict) -> pd.DataFrame:
+    feature_df = build_feature_ready_row(user_inputs)
+    return predict_from_features(feature_df)
+
+
+def render_footer_navigation(show_previous: bool, show_next: bool) -> None:
+    st.markdown("---")
+    left, right = st.columns(2)
+
+    with left:
+        if show_previous:
+            st.button(
+                "⬅ Previous Page",
+                use_container_width=True,
+                on_click=go_to_page,
+                args=("Match Prediction",),
+                key=f"prev_btn_{st.session_state['current_page']}",
+            )
+
+    with right:
+        if show_next:
+            st.button(
+                "Next Page ➡",
+                use_container_width=True,
+                on_click=go_to_page,
+                args=("Analyse Bookmaker Bias",),
+                key=f"next_btn_{st.session_state['current_page']}",
+            )
+
+
+def render_disclaimer() -> None:
+    st.warning(
+        "Disclaimer: This application is provided strictly for informational and educational purposes only. "
+        "It does not constitute financial advice, betting advice, investment advice, or any guaranteed decision-support tool. "
+        "Sports betting carries a serious risk of financial loss. Anyone considering sports betting should consult qualified professionals "
+        "specialized in responsible gambling, financial decision-making, or related advisory services. "
+        "The author accepts no responsibility or liability for any loss, damage, or consequence resulting from the use of this application "
+        "as financial advice, betting advice, or as a source of income."
     )
 
 
@@ -121,34 +177,118 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
     values = {}
 
     values[f"{prefix}_goals_scored_last5"] = c1.number_input(
-        "Goals registered", min_value=0.0, value=1.0, step=0.1, key=f"{key_prefix}_{prefix}_goals_registered"
+        "Goals registered",
+        min_value=0.0,
+        value=1.0,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_goals_registered",
+        help=(
+            "Average goals scored by the team across its last 5 matches. "
+            "You can get this directly from recent match results: add goals scored in the last 5 matches and divide by 5."
+        ),
     )
     values[f"{prefix}_goals_conceded_last5"] = c2.number_input(
-        "Goals conceded", min_value=0.0, value=1.0, step=0.1, key=f"{key_prefix}_{prefix}_goals_conceded"
+        "Goals conceded",
+        min_value=0.0,
+        value=1.0,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_goals_conceded",
+        help=(
+            "Average goals conceded by the team across its last 5 matches. "
+            "Take goals allowed in the last 5 matches, sum them, then divide by 5."
+        ),
     )
+
     values[f"{prefix}_shots_for_last5"] = c1.number_input(
-        "Shots registered", min_value=0.0, value=4.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_registered"
+        "Shots registered",
+        min_value=0.0,
+        value=4.0,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_shots_registered",
+        help=(
+            "Average total shots attempted by the team over its last 5 matches. "
+            "This is often available directly on live-score or match-stat sites. Otherwise, add the last 5 values and divide by 5."
+        ),
     )
     values[f"{prefix}_shots_against_last5"] = c2.number_input(
-        "Shots conceded", min_value=0.0, value=4.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_conceded"
+        "Shots conceded",
+        min_value=0.0,
+        value=4.0,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_shots_conceded",
+        help=(
+            "Average total shots allowed by the team over its last 5 matches. "
+            "Use opponent shot totals from the last 5 matches, sum them, then divide by 5."
+        ),
     )
+
     values[f"{prefix}_shots_on_target_for_last5"] = c1.number_input(
-        "Shots on target registered", min_value=0.0, value=2.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_ot_registered"
+        "Shots on target registered",
+        min_value=0.0,
+        value=2.0,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_shots_ot_registered",
+        help=(
+            "Average shots on target made by the team across its last 5 matches. "
+            "Usually available directly from match-stat sites. Otherwise, sum the last 5 shots-on-target values and divide by 5."
+        ),
     )
     values[f"{prefix}_shots_on_target_against_last5"] = c2.number_input(
-        "Shots on target conceded", min_value=0.0, value=2.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_ot_conceded"
+        "Shots on target conceded",
+        min_value=0.0,
+        value=2.0,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_shots_ot_conceded",
+        help=(
+            "Average shots on target allowed by the team across its last 5 matches. "
+            "Use opponent shots on target from the last 5 matches, sum them, then divide by 5."
+        ),
     )
+
     values[f"{prefix}_fouls_for_last5"] = c1.number_input(
-        "Fouls registered", min_value=0.0, value=10.0, step=0.1, key=f"{key_prefix}_{prefix}_fouls_registered"
+        "Fouls registered",
+        min_value=0.0,
+        value=10.0,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_fouls_registered",
+        help=(
+            "Average fouls committed by the team over its last 5 matches. "
+            "This is commonly shown on detailed match-stat pages. Sum the last 5 foul totals and divide by 5."
+        ),
     )
     values[f"{prefix}_fouls_against_last5"] = c2.number_input(
-        "Fouls conceded", min_value=0.0, value=10.0, step=0.1, key=f"{key_prefix}_{prefix}_fouls_conceded"
+        "Fouls conceded",
+        min_value=0.0,
+        value=10.0,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_fouls_conceded",
+        help=(
+            "Average fouls won by the team, or equivalently fouls committed by opponents, over the last 5 matches. "
+            "Sum the last 5 values and divide by 5."
+        ),
     )
+
     values[f"{prefix}_corners_for_last5"] = c1.number_input(
-        "Corners registered", min_value=0.0, value=5.0, step=0.1, key=f"{key_prefix}_{prefix}_corners_registered"
+        "Corners registered",
+        min_value=0.0,
+        value=5.0,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_corners_registered",
+        help=(
+            "Average corners earned by the team across its last 5 matches. "
+            "Usually available directly on live-score and advanced match-stat websites. Sum the last 5 values and divide by 5."
+        ),
     )
     values[f"{prefix}_corners_against_last5"] = c2.number_input(
-        "Corners conceded", min_value=0.0, value=5.0, step=0.1, key=f"{key_prefix}_{prefix}_corners_conceded"
+        "Corners conceded",
+        min_value=0.0,
+        value=5.0,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_corners_conceded",
+        help=(
+            "Average corners allowed by the team across its last 5 matches. "
+            "Use opponent corners from the last 5 matches, sum them, then divide by 5."
+        ),
     )
 
     return values
@@ -157,14 +297,12 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
 def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
     st.subheader("Match Context")
 
-    # Team names
     c1, c2 = st.columns(2)
     with c1:
         home_team = team_input_block("home", "Home Team", key_prefix)
     with c2:
         away_team = team_input_block("away", "Away Team", key_prefix)
 
-    # Matchday on its own row
     matchday = st.number_input(
         "Matchday",
         min_value=1,
@@ -172,9 +310,9 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
         value=10,
         step=1,
         key=f"{key_prefix}_matchday",
+        help="The league round number for the fixture. This is usually directly available from the fixture list or competition schedule.",
     )
 
-    # Home / Away context side by side
     left, right = st.columns(2)
 
     with left:
@@ -186,6 +324,7 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
             value=6,
             step=1,
             key=f"{key_prefix}_home_pre_position",
+            help="The team's league position before kickoff. You can usually get this directly from the live table or standings before the match starts.",
         )
         home_form = st.number_input(
             "Home form (0–1)",
@@ -195,9 +334,9 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
             step=0.01,
             key=f"{key_prefix}_home_form",
             help=(
-                "Team form is calculated as: total points from the last 5 matches divided by 15. "
-                "A win = 3 points, draw = 1 point, loss = 0 points. "
-                "Example: 3 wins, 1 draw, 1 loss gives 10 points, so form = 10 / 15 = 0.67."
+                "Team form = total points from the last 5 matches divided by 15. "
+                "Win = 3 points, draw = 1 point, loss = 0 points. "
+                "Example: 3 wins, 1 draw, 1 loss = 10 points, so form = 10 / 15 = 0.67."
             ),
         )
 
@@ -210,6 +349,7 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
             value=10,
             step=1,
             key=f"{key_prefix}_away_pre_position",
+            help="The team's league position before kickoff. You can usually get this directly from the live table or standings before the match starts.",
         )
         away_form = st.number_input(
             "Away form (0–1)",
@@ -219,9 +359,9 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
             step=0.01,
             key=f"{key_prefix}_away_form",
             help=(
-                "Team form is calculated as: total points from the last 5 matches divided by 15. "
-                "A win = 3 points, draw = 1 point, loss = 0 points. "
-                "Example: 2 wins, 2 draws, 1 loss gives 8 points, so form = 8 / 15 = 0.53."
+                "Team form = total points from the last 5 matches divided by 15. "
+                "Win = 3 points, draw = 1 point, loss = 0 points. "
+                "Example: 2 wins, 2 draws, 1 loss = 8 points, so form = 8 / 15 = 0.53."
             ),
         )
 
@@ -256,27 +396,21 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
     return user_inputs, home_team, away_team
 
 
-def get_prediction_results(user_inputs: dict) -> pd.DataFrame:
-    feature_df = build_feature_ready_row(user_inputs)
-    return predict_from_features(feature_df)
-
-
-def validate_teams(home_team: str, away_team: str) -> None:
-    if not home_team:
-        raise ValueError("Please provide a Home Team.")
-    if not away_team:
-        raise ValueError("Please provide an Away Team.")
-    if home_team == away_team:
-        raise ValueError("Home Team and Away Team must be different.")
-
-
 st.title("⚽ Jupiler Pro League Match Prediction System")
 st.caption("Belgian Jupiler Pro League focused. Enter match features on page 1, then analyse bookmaker bias on page 2.")
+render_disclaimer()
 
-tab1, tab2 = st.tabs(["Match Prediction", "Analyse Bookmaker Bias"])
+selected_page = st.radio(
+    "Navigation",
+    options=["Match Prediction", "Analyse Bookmaker Bias"],
+    index=0 if st.session_state["current_page"] == "Match Prediction" else 1,
+    horizontal=True,
+)
 
-with tab1:
-    user_inputs, home_team, away_team = collect_model_inputs("prediction_tab")
+st.session_state["current_page"] = selected_page
+
+if st.session_state["current_page"] == "Match Prediction":
+    user_inputs, home_team, away_team = collect_model_inputs("prediction_page")
 
     if st.button("Predict Match Outcome", use_container_width=True, key="predict_button"):
         try:
@@ -312,7 +446,9 @@ with tab1:
         except Exception as e:
             st.error(f"Prediction failed: {e}")
 
-with tab2:
+    render_footer_navigation(show_previous=False, show_next=True)
+
+elif st.session_state["current_page"] == "Analyse Bookmaker Bias":
     if not st.session_state.get("latest_prediction_ready", False):
         st.info("Please complete a prediction on the Match Prediction page first.")
     else:
@@ -328,13 +464,28 @@ with tab2:
         st.subheader("Insert Bookmaker Odds")
         b1, b2, b3 = st.columns(3)
         bookmaker_home_odds = b1.number_input(
-            "Bookmaker Home Win Odds", min_value=1.01, value=2.10, step=0.01, key="bias_home_odds"
+            "Bookmaker Home Win Odds",
+            min_value=1.01,
+            value=2.10,
+            step=0.01,
+            key="bias_home_odds",
+            help="Insert the decimal odds quoted by the bookmaker for a home win.",
         )
         bookmaker_draw_odds = b2.number_input(
-            "Bookmaker Draw Odds", min_value=1.01, value=3.40, step=0.01, key="bias_draw_odds"
+            "Bookmaker Draw Odds",
+            min_value=1.01,
+            value=3.40,
+            step=0.01,
+            key="bias_draw_odds",
+            help="Insert the decimal odds quoted by the bookmaker for a draw.",
         )
         bookmaker_away_odds = b3.number_input(
-            "Bookmaker Away Win Odds", min_value=1.01, value=3.60, step=0.01, key="bias_away_odds"
+            "Bookmaker Away Win Odds",
+            min_value=1.01,
+            value=3.60,
+            step=0.01,
+            key="bias_away_odds",
+            help="Insert the decimal odds quoted by the bookmaker for an away win.",
         )
 
         if st.button("Submit Bookmaker Analysis", use_container_width=True, key="submit_bias_analysis"):
@@ -398,3 +549,5 @@ with tab2:
 
             except Exception as e:
                 st.error(f"Bias analysis failed: {e}")
+
+    render_footer_navigation(show_previous=True, show_next=False)
