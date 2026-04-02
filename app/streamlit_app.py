@@ -62,12 +62,33 @@ def bookmaker_implied_probability(odds: float) -> float:
     return 1.0 / odds
 
 
-def explain_bias(probability_gap: float) -> str:
+def explain_probability_gap(probability_gap: float) -> str:
     if probability_gap > 0.03:
-        return "The model rates this outcome higher than the bookmaker market. This may indicate possible value."
+        return "The model assigns a meaningfully higher probability than the bookmaker market. This outcome may offer potential value from the model's perspective."
     if probability_gap < -0.03:
-        return "The bookmaker market rates this outcome higher than the model. The outcome may be overpriced by the market."
-    return "The model and bookmaker are relatively aligned for this outcome."
+        return "The bookmaker market assigns a meaningfully higher probability than the model. This outcome may be overpriced by the market."
+    return "The model and the bookmaker market are relatively aligned on this outcome."
+
+
+def explain_overround(overround: float) -> str:
+    if overround > 0:
+        return (
+            f"The overround is positive at {overround:.2%}. "
+            f"This means the bookmaker has an edge of {overround:.2%} built into the market, "
+            f"regardless of the stake size. In practice, the total implied probability is above 100%, "
+            f"so the market is priced in the bookmaker's favor."
+        )
+    if abs(overround) < 1e-12:
+        return (
+            "The overround is 0.00%. This means the market is fair in pricing terms, "
+            "because the total implied probability is exactly 100%. "
+            "There is no built-in bookmaker margin from the quoted odds alone."
+        )
+    return (
+        f"The overround is negative at {overround:.2%}. "
+        f"This means the total implied probability is below 100%, which may indicate a possible value-betting or arbitrage opportunity. "
+        f"In simple terms, the quoted market may be underpriced rather than favoring the bookmaker."
+    )
 
 
 def team_input_block(prefix: str, label: str, key_prefix: str) -> str:
@@ -135,20 +156,74 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
 
 def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
     st.subheader("Match Context")
-    c1, c2 = st.columns(2)
 
+    # Team names
+    c1, c2 = st.columns(2)
     with c1:
         home_team = team_input_block("home", "Home Team", key_prefix)
     with c2:
         away_team = team_input_block("away", "Away Team", key_prefix)
 
-    c3, c4, c5, c6 = st.columns(4)
-    matchday = c3.number_input("Matchday", min_value=1, max_value=40, value=10, step=1, key=f"{key_prefix}_matchday")
-    home_pre_position = c4.number_input("Home pre-match position", min_value=1, max_value=20, value=6, step=1, key=f"{key_prefix}_home_pre_position")
-    away_pre_position = c5.number_input("Away pre-match position", min_value=1, max_value=20, value=10, step=1, key=f"{key_prefix}_away_pre_position")
-    home_form = c6.number_input("Home form (0-1)", min_value=0.0, max_value=1.0, value=0.50, step=0.01, key=f"{key_prefix}_home_form")
+    # Matchday on its own row
+    matchday = st.number_input(
+        "Matchday",
+        min_value=1,
+        max_value=40,
+        value=10,
+        step=1,
+        key=f"{key_prefix}_matchday",
+    )
 
-    away_form = st.number_input("Away form (0-1)", min_value=0.0, max_value=1.0, value=0.50, step=0.01, key=f"{key_prefix}_away_form")
+    # Home / Away context side by side
+    left, right = st.columns(2)
+
+    with left:
+        st.markdown("### Home Team Context")
+        home_pre_position = st.number_input(
+            "Home pre-match position",
+            min_value=1,
+            max_value=20,
+            value=6,
+            step=1,
+            key=f"{key_prefix}_home_pre_position",
+        )
+        home_form = st.number_input(
+            "Home form (0–1)",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.50,
+            step=0.01,
+            key=f"{key_prefix}_home_form",
+            help=(
+                "Team form is calculated as: total points from the last 5 matches divided by 15. "
+                "A win = 3 points, draw = 1 point, loss = 0 points. "
+                "Example: 3 wins, 1 draw, 1 loss gives 10 points, so form = 10 / 15 = 0.67."
+            ),
+        )
+
+    with right:
+        st.markdown("### Away Team Context")
+        away_pre_position = st.number_input(
+            "Away pre-match position",
+            min_value=1,
+            max_value=20,
+            value=10,
+            step=1,
+            key=f"{key_prefix}_away_pre_position",
+        )
+        away_form = st.number_input(
+            "Away form (0–1)",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.50,
+            step=0.01,
+            key=f"{key_prefix}_away_form",
+            help=(
+                "Team form is calculated as: total points from the last 5 matches divided by 15. "
+                "A win = 3 points, draw = 1 point, loss = 0 points. "
+                "Example: 2 wins, 2 draws, 1 loss gives 8 points, so form = 8 / 15 = 0.53."
+            ),
+        )
 
     st.markdown("---")
 
@@ -298,7 +373,7 @@ with tab2:
                         "Bookmaker Implied Probability": [bookmaker_prob_h, bookmaker_prob_d, bookmaker_prob_a],
                         "Bookmaker Normalized Probability": [norm_bookmaker_prob_h, norm_bookmaker_prob_d, norm_bookmaker_prob_a],
                         "Probability Gap (Model - Bookmaker)": [gap_h, gap_d, gap_a],
-                        "Short Explanation": [explain_bias(gap_h), explain_bias(gap_d), explain_bias(gap_a)],
+                        "Short Explanation": [explain_probability_gap(gap_h), explain_probability_gap(gap_d), explain_probability_gap(gap_a)],
                     }
                 )
 
@@ -315,13 +390,11 @@ with tab2:
                     ],
                 )
 
+                st.subheader("Market Interpretation")
+                st.info(explain_overround(overround))
+
                 st.subheader("Model vs Bookmaker Comparison")
                 st.dataframe(comparison_df, use_container_width=True)
-
-                st.info(
-                    "Interpretation: bookmaker edge is the overround, which is the total implied probability above 100%. "
-                    "A positive probability gap means the model rates that outcome higher than the bookmaker's normalized market estimate."
-                )
 
             except Exception as e:
                 st.error(f"Bias analysis failed: {e}")
