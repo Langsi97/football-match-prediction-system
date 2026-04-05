@@ -51,6 +51,30 @@ DEFAULT_AWAY_YELLOW_CONCEDED = 1.50
 DEFAULT_AWAY_RED_REGISTERED = 0.10
 DEFAULT_AWAY_RED_CONCEDED = 0.10
 
+REQUIRED_UPLOAD_COLUMNS = [
+    "Date",
+    "HomeTeam",
+    "AwayTeam",
+    "FTHG",
+    "FTAG",
+    "HS",
+    "AS",
+    "HST",
+    "AST",
+    "HF",
+    "AF",
+    "HC",
+    "AC",
+]
+
+OPTIONAL_UPLOAD_COLUMNS_WITH_DEFAULTS = {
+    "HY": DEFAULT_HOME_YELLOW_REGISTERED,
+    "AY": DEFAULT_AWAY_YELLOW_REGISTERED,
+    "HR": DEFAULT_HOME_RED_REGISTERED,
+    "AR": DEFAULT_AWAY_RED_REGISTERED,
+    "Time": None,
+}
+
 
 if "current_page" not in st.session_state:
     st.session_state["current_page"] = "Match Prediction"
@@ -72,6 +96,9 @@ if "latest_shap_explanation" not in st.session_state:
 
 if "latest_shap_error" not in st.session_state:
     st.session_state["latest_shap_error"] = None
+
+if "latest_auto_features_df" not in st.session_state:
+    st.session_state["latest_auto_features_df"] = None
 
 
 def go_to_page(page_name: str) -> None:
@@ -213,9 +240,258 @@ def team_input_block(prefix: str, label: str, key_prefix: str) -> str:
     return st.text_input(
         label,
         value="",
-        placeholder="Type team name",
+        placeholder="Type team name exactly as it appears in your uploaded match data if using file upload mode.",
         key=f"{key_prefix}_{prefix}_team_text",
     ).strip()
+
+
+def load_uploaded_match_file(uploaded_file) -> pd.DataFrame:
+    file_name = uploaded_file.name.lower()
+
+    if file_name.endswith(".csv"):
+        df = pd.read_csv(uploaded_file)
+    elif file_name.endswith(".xlsx") or file_name.endswith(".xls"):
+        df = pd.read_excel(uploaded_file)
+    else:
+        raise ValueError("Unsupported file format. Please upload a CSV or Excel file.")
+
+    return df
+
+
+def validate_and_prepare_uploaded_match_data(raw_df: pd.DataFrame) -> pd.DataFrame:
+    if raw_df.empty:
+        raise ValueError("The uploaded file is empty.")
+
+    df = raw_df.copy()
+
+    missing_required = [col for col in REQUIRED_UPLOAD_COLUMNS if col not in df.columns]
+    if missing_required:
+        raise ValueError(
+            f"The uploaded file is missing required columns: {missing_required}"
+        )
+
+    for optional_col, default_value in OPTIONAL_UPLOAD_COLUMNS_WITH_DEFAULTS.items():
+        if optional_col not in df.columns:
+            df[optional_col] = default_value
+
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce", dayfirst=True)
+    if df["Date"].isna().all():
+        raise ValueError("Could not parse the 'Date' column. Please check the date format.")
+
+    df = df.dropna(subset=["Date"]).copy()
+
+    numeric_columns = [
+        "FTHG", "FTAG", "HS", "AS", "HST", "AST", "HF", "AF", "HC", "AC",
+        "HY", "AY", "HR", "AR",
+    ]
+    for col in numeric_columns:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    if df[numeric_columns].isna().any().any():
+        df[numeric_columns] = df[numeric_columns].fillna(0.0)
+
+    if "Time" in df.columns:
+        df["Time"] = df["Time"].astype(str).fillna("")
+
+    df["HomeTeam"] = df["HomeTeam"].astype(str).str.strip()
+    df["AwayTeam"] = df["AwayTeam"].astype(str).str.strip()
+
+    sort_columns = ["Date"]
+    if "Time" in df.columns:
+        sort_columns.append("Time")
+    df = df.sort_values(sort_columns).reset_index(drop=True)
+
+    return df
+
+
+def build_team_centric_history(matches_df: pd.DataFrame) -> pd.DataFrame:
+    home_df = pd.DataFrame(
+        {
+            "Date": matches_df["Date"],
+            "Time": matches_df["Time"],
+            "team": matches_df["HomeTeam"],
+            "opponent": matches_df["AwayTeam"],
+            "is_home": 1,
+            "goals_for": matches_df["FTHG"],
+            "goals_against": matches_df["FTAG"],
+            "shots_for": matches_df["HS"],
+            "shots_against": matches_df["AS"],
+            "shots_on_target_for": matches_df["HST"],
+            "shots_on_target_against": matches_df["AST"],
+            "fouls_for": matches_df["HF"],
+            "fouls_against": matches_df["AF"],
+            "corners_for": matches_df["HC"],
+            "corners_against": matches_df["AC"],
+            "yellow_cards_for": matches_df["HY"],
+            "yellow_cards_against": matches_df["AY"],
+            "red_cards_for": matches_df["HR"],
+            "red_cards_against": matches_df["AR"],
+        }
+    )
+
+    away_df = pd.DataFrame(
+        {
+            "Date": matches_df["Date"],
+            "Time": matches_df["Time"],
+            "team": matches_df["AwayTeam"],
+            "opponent": matches_df["HomeTeam"],
+            "is_home": 0,
+            "goals_for": matches_df["FTAG"],
+            "goals_against": matches_df["FTHG"],
+            "shots_for": matches_df["AS"],
+            "shots_against": matches_df["HS"],
+            "shots_on_target_for": matches_df["AST"],
+            "shots_on_target_against": matches_df["HST"],
+            "fouls_for": matches_df["AF"],
+            "fouls_against": matches_df["HF"],
+            "corners_for": matches_df["AC"],
+            "corners_against": matches_df["HC"],
+            "yellow_cards_for": matches_df["AY"],
+            "yellow_cards_against": matches_df["HY"],
+            "red_cards_for": matches_df["AR"],
+            "red_cards_against": matches_df["HR"],
+        }
+    )
+
+    history_df = pd.concat([home_df, away_df], ignore_index=True)
+
+    history_df["points"] = 0
+    history_df.loc[history_df["goals_for"] > history_df["goals_against"], "points"] = 3
+    history_df.loc[history_df["goals_for"] == history_df["goals_against"], "points"] = 1
+
+    history_df = history_df.sort_values(["Date", "Time"]).reset_index(drop=True)
+    return history_df
+
+
+def get_team_last_n_matches(team_history_df: pd.DataFrame, team_name: str, n_matches: int = 5) -> pd.DataFrame:
+    team_df = team_history_df[team_history_df["team"] == team_name].copy()
+    team_df = team_df.sort_values(["Date", "Time"]).reset_index(drop=True)
+
+    if len(team_df) < n_matches:
+        raise ValueError(
+            f"Not enough historical matches found for team '{team_name}'. "
+            f"At least {n_matches} past matches are required, but only {len(team_df)} were found."
+        )
+
+    return team_df.tail(n_matches).reset_index(drop=True)
+
+
+def compute_team_recent_features(team_recent_df: pd.DataFrame, prefix: str) -> dict:
+    feature_map = {
+        f"{prefix}_goals_scored_last5": team_recent_df["goals_for"].mean(),
+        f"{prefix}_goals_conceded_last5": team_recent_df["goals_against"].mean(),
+        f"{prefix}_shots_for_last5": team_recent_df["shots_for"].mean(),
+        f"{prefix}_shots_against_last5": team_recent_df["shots_against"].mean(),
+        f"{prefix}_shots_on_target_for_last5": team_recent_df["shots_on_target_for"].mean(),
+        f"{prefix}_shots_on_target_against_last5": team_recent_df["shots_on_target_against"].mean(),
+        f"{prefix}_fouls_for_last5": team_recent_df["fouls_for"].mean(),
+        f"{prefix}_fouls_against_last5": team_recent_df["fouls_against"].mean(),
+        f"{prefix}_corners_for_last5": team_recent_df["corners_for"].mean(),
+        f"{prefix}_corners_against_last5": team_recent_df["corners_against"].mean(),
+        f"{prefix}_yellow_cards_for_last5": team_recent_df["yellow_cards_for"].mean(),
+        f"{prefix}_yellow_cards_against_last5": team_recent_df["yellow_cards_against"].mean(),
+        f"{prefix}_red_cards_for_last5": team_recent_df["red_cards_for"].mean(),
+        f"{prefix}_red_cards_against_last5": team_recent_df["red_cards_against"].mean(),
+    }
+    return {k: float(v) for k, v in feature_map.items()}
+
+
+def compute_current_league_positions(matches_df: pd.DataFrame) -> pd.DataFrame:
+    home_table = pd.DataFrame(
+        {
+            "team": matches_df["HomeTeam"],
+            "gf": matches_df["FTHG"],
+            "ga": matches_df["FTAG"],
+            "points": (
+                (matches_df["FTHG"] > matches_df["FTAG"]).astype(int) * 3
+                + (matches_df["FTHG"] == matches_df["FTAG"]).astype(int)
+            ),
+        }
+    )
+
+    away_table = pd.DataFrame(
+        {
+            "team": matches_df["AwayTeam"],
+            "gf": matches_df["FTAG"],
+            "ga": matches_df["FTHG"],
+            "points": (
+                (matches_df["FTAG"] > matches_df["FTHG"]).astype(int) * 3
+                + (matches_df["FTAG"] == matches_df["FTHG"]).astype(int)
+            ),
+        }
+    )
+
+    table = pd.concat([home_table, away_table], ignore_index=True)
+    standings = (
+        table.groupby("team", as_index=False)
+        .agg(
+            points=("points", "sum"),
+            goals_for=("gf", "sum"),
+            goals_against=("ga", "sum"),
+        )
+    )
+    standings["goal_diff"] = standings["goals_for"] - standings["goals_against"]
+
+    standings = standings.sort_values(
+        by=["points", "goal_diff", "goals_for", "team"],
+        ascending=[False, False, False, True],
+    ).reset_index(drop=True)
+
+    standings["position"] = standings.index + 1
+    return standings
+
+
+def auto_build_user_inputs_from_uploaded_history(
+    uploaded_matches_df: pd.DataFrame,
+    home_team: str,
+    away_team: str,
+    matchday: float,
+    match_hour: float,
+) -> tuple[dict, pd.DataFrame]:
+    team_history_df = build_team_centric_history(uploaded_matches_df)
+
+    home_recent_df = get_team_last_n_matches(team_history_df, home_team, n_matches=5)
+    away_recent_df = get_team_last_n_matches(team_history_df, away_team, n_matches=5)
+
+    standings_df = compute_current_league_positions(uploaded_matches_df)
+
+    home_position_row = standings_df[standings_df["team"] == home_team]
+    away_position_row = standings_df[standings_df["team"] == away_team]
+
+    if home_position_row.empty:
+        raise ValueError(f"Could not derive a current league position for home team '{home_team}'.")
+    if away_position_row.empty:
+        raise ValueError(f"Could not derive a current league position for away team '{away_team}'.")
+
+    home_pre_position = float(home_position_row["position"].iloc[0])
+    away_pre_position = float(away_position_row["position"].iloc[0])
+
+    home_form = float(home_recent_df["points"].sum() / 15.0)
+    away_form = float(away_recent_df["points"].sum() / 15.0)
+
+    home_features = compute_team_recent_features(home_recent_df, prefix="home")
+    away_features = compute_team_recent_features(away_recent_df, prefix="away")
+
+    user_inputs = {
+        "matchday": float(matchday),
+        "hour": float(match_hour),
+        "home_pre_position": home_pre_position,
+        "away_pre_position": away_pre_position,
+        "home_form": home_form,
+        "away_form": away_form,
+        "home_advantage": float(DEFAULT_HOME_ADVANTAGE),
+        **home_features,
+        **away_features,
+    }
+
+    preview_df = pd.DataFrame(
+        {
+            "feature": list(user_inputs.keys()),
+            "value": list(user_inputs.values()),
+        }
+    )
+
+    return user_inputs, preview_df
 
 
 def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
@@ -339,10 +615,44 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         ),
     )
 
+    values[f"{prefix}_yellow_cards_for_last5"] = c1.number_input(
+        "Yellow cards registered",
+        min_value=0.0,
+        value=DEFAULT_HOME_YELLOW_REGISTERED if prefix == "home" else DEFAULT_AWAY_YELLOW_REGISTERED,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_yellow_registered",
+        help="Average yellow cards received by the team across its last 5 matches.",
+    )
+    values[f"{prefix}_yellow_cards_against_last5"] = c2.number_input(
+        "Yellow cards conceded",
+        min_value=0.0,
+        value=DEFAULT_HOME_YELLOW_CONCEDED if prefix == "home" else DEFAULT_AWAY_YELLOW_CONCEDED,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_yellow_conceded",
+        help="Average yellow cards received by opponents across the team's last 5 matches.",
+    )
+
+    values[f"{prefix}_red_cards_for_last5"] = c1.number_input(
+        "Red cards registered",
+        min_value=0.0,
+        value=DEFAULT_HOME_RED_REGISTERED if prefix == "home" else DEFAULT_AWAY_RED_REGISTERED,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_red_registered",
+        help="Average red cards received by the team across its last 5 matches.",
+    )
+    values[f"{prefix}_red_cards_against_last5"] = c2.number_input(
+        "Red cards conceded",
+        min_value=0.0,
+        value=DEFAULT_HOME_RED_CONCEDED if prefix == "home" else DEFAULT_AWAY_RED_CONCEDED,
+        step=0.1,
+        key=f"{key_prefix}_{prefix}_red_conceded",
+        help="Average red cards received by opponents across the team's last 5 matches.",
+    )
+
     return values
 
 
-def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
+def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str, str, pd.DataFrame | None]:
     st.subheader("Match Context")
 
     c1, c2 = st.columns(2)
@@ -351,15 +661,74 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
     with c2:
         away_team = team_input_block("away", "Away Team", key_prefix)
 
-    matchday = st.number_input(
-        "Matchday",
-        min_value=1,
-        max_value=40,
-        value=10,
-        step=1,
-        key=f"{key_prefix}_matchday",
-        help="The league round number for the fixture. This is usually directly available from the fixture list or competition schedule.",
+    top_left, top_right = st.columns(2)
+    with top_left:
+        matchday = st.number_input(
+            "Matchday",
+            min_value=1,
+            max_value=40,
+            value=10,
+            step=1,
+            key=f"{key_prefix}_matchday",
+            help="The league round number for the fixture. This is usually directly available from the fixture list or competition schedule.",
+        )
+    with top_right:
+        match_hour = st.number_input(
+            "Match Hour",
+            min_value=0.0,
+            max_value=23.0,
+            value=float(DEFAULT_HOUR),
+            step=1.0,
+            key=f"{key_prefix}_match_hour",
+            help="Enter the starting hour of the match. Example: if kickoff is between 1:00 and 1:59, enter 1. If kickoff is between 20:00 and 20:59, enter 20.",
+        )
+
+    st.markdown("---")
+    st.subheader("Feature Input Mode")
+
+    input_mode = st.radio(
+        "Choose how to provide model features",
+        options=["Manual feature entry", "Upload match data for better prediction"],
+        horizontal=True,
+        key=f"{key_prefix}_input_mode",
     )
+
+    auto_preview_df = None
+
+    if input_mode == "Upload match data for better prediction":
+        st.info(
+            "For better predictions, upload historical match data so the system can automatically compute the last 5-match features used by the model."
+        )
+
+        uploaded_file = st.file_uploader(
+            "Upload historical match data (CSV or Excel)",
+            type=["csv", "xlsx", "xls"],
+            key=f"{key_prefix}_uploaded_history_file",
+            help=(
+                "The file should contain past matches and should include columns such as Date, HomeTeam, AwayTeam, "
+                "FTHG, FTAG, HS, AS, HST, AST, HF, AF, HC, AC. HY, AY, HR, and AR are optional but recommended."
+            ),
+        )
+
+        if uploaded_file is None:
+            st.warning("Please upload a CSV or Excel file to use automatic feature generation.")
+            return {}, home_team, away_team, input_mode, auto_preview_df
+
+        raw_uploaded_df = load_uploaded_match_file(uploaded_file)
+        prepared_uploaded_df = validate_and_prepare_uploaded_match_data(raw_uploaded_df)
+
+        st.markdown("### Uploaded Data Preview")
+        st.dataframe(prepared_uploaded_df.head(10), use_container_width=True)
+
+        user_inputs, auto_preview_df = auto_build_user_inputs_from_uploaded_history(
+            uploaded_matches_df=prepared_uploaded_df,
+            home_team=home_team,
+            away_team=away_team,
+            matchday=float(matchday),
+            match_hour=float(match_hour),
+        )
+
+        return user_inputs, home_team, away_team, input_mode, auto_preview_df
 
     left, right = st.columns(2)
 
@@ -423,7 +792,7 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
 
     user_inputs = {
         "matchday": float(matchday),
-        "hour": float(DEFAULT_HOUR),
+        "hour": float(match_hour),
         "home_pre_position": float(home_pre_position),
         "away_pre_position": float(away_pre_position),
         "home_form": float(home_form),
@@ -431,17 +800,9 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
         "home_advantage": float(DEFAULT_HOME_ADVANTAGE),
         **home_inputs,
         **away_inputs,
-        "home_yellow_cards_for_last5": float(DEFAULT_HOME_YELLOW_REGISTERED),
-        "home_yellow_cards_against_last5": float(DEFAULT_HOME_YELLOW_CONCEDED),
-        "home_red_cards_for_last5": float(DEFAULT_HOME_RED_REGISTERED),
-        "home_red_cards_against_last5": float(DEFAULT_HOME_RED_CONCEDED),
-        "away_yellow_cards_for_last5": float(DEFAULT_AWAY_YELLOW_REGISTERED),
-        "away_yellow_cards_against_last5": float(DEFAULT_AWAY_YELLOW_CONCEDED),
-        "away_red_cards_for_last5": float(DEFAULT_AWAY_RED_REGISTERED),
-        "away_red_cards_against_last5": float(DEFAULT_AWAY_RED_CONCEDED),
     }
 
-    return user_inputs, home_team, away_team
+    return user_inputs, home_team, away_team, input_mode, auto_preview_df
 
 
 def render_prediction_output(results: pd.DataFrame, home_team: str, away_team: str) -> None:
@@ -550,7 +911,15 @@ selected_page = st.radio(
 st.session_state["current_page"] = selected_page
 
 if st.session_state["current_page"] == "Match Prediction":
-    user_inputs, home_team, away_team = collect_model_inputs("prediction_page")
+    try:
+        user_inputs, home_team, away_team, input_mode, auto_preview_df = collect_model_inputs("prediction_page")
+    except Exception as input_error:
+        st.error(f"Input preparation failed: {input_error}")
+        user_inputs, home_team, away_team, input_mode, auto_preview_df = {}, "", "", "", None
+
+    if auto_preview_df is not None and input_mode == "Upload match data for better prediction":
+        st.markdown("### Auto-Generated Features Used for Prediction")
+        st.dataframe(auto_preview_df, use_container_width=True)
 
     prediction_triggered = st.button(
         "Predict Match Outcome",
@@ -562,12 +931,18 @@ if st.session_state["current_page"] == "Match Prediction":
         try:
             validate_teams(home_team, away_team)
 
+            if not user_inputs:
+                raise ValueError(
+                    "Prediction inputs are not ready. Please complete the manual fields or upload a valid match data file."
+                )
+
             results = get_prediction_results(user_inputs)
 
             st.session_state["latest_prediction_results"] = results
             st.session_state["latest_home_team"] = home_team
             st.session_state["latest_away_team"] = away_team
             st.session_state["latest_prediction_ready"] = True
+            st.session_state["latest_auto_features_df"] = auto_preview_df
 
             st.session_state["latest_shap_explanation"] = None
             st.session_state["latest_shap_error"] = None
@@ -583,6 +958,7 @@ if st.session_state["current_page"] == "Match Prediction":
             st.session_state["latest_prediction_results"] = None
             st.session_state["latest_shap_explanation"] = None
             st.session_state["latest_shap_error"] = None
+            st.session_state["latest_auto_features_df"] = None
             st.error(f"Prediction failed: {prediction_error}")
 
     if st.session_state.get("latest_prediction_ready", False):
@@ -591,9 +967,14 @@ if st.session_state["current_page"] == "Match Prediction":
         saved_away_team = st.session_state.get("latest_away_team", "")
         shap_results = st.session_state.get("latest_shap_explanation")
         shap_error = st.session_state.get("latest_shap_error")
+        saved_auto_features_df = st.session_state.get("latest_auto_features_df")
 
         if results is not None:
             render_prediction_output(results, saved_home_team, saved_away_team)
+
+            if saved_auto_features_df is not None:
+                st.markdown("### Stored Auto-Generated Features")
+                st.dataframe(saved_auto_features_df, use_container_width=True)
 
             if shap_error:
                 st.warning(
