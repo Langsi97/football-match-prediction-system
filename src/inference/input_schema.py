@@ -1,12 +1,7 @@
 """
-Final UI input schema for Streamlit.
+Streamlit input schema for the final football match prediction app.
 
-This module defines which user-entered fields the app will collect
-and how they map into the model's feature space.
-
-Important:
-- This version focuses on the screenshot-style last-5 stats input.
-- Additional engineered fields required by the model are also included.
+This module maps user-entered UI fields to the exact model feature names.
 """
 
 from __future__ import annotations
@@ -17,15 +12,16 @@ import pandas as pd
 
 
 UI_TO_MODEL_FEATURE_MAP: Dict[str, str] = {
-    # Meta / context
-    "hour": "Hour",
+    # Context features
+    "matchday": "matchday",
     "home_pre_position": "Home_pre_po",
     "away_pre_position": "Away_pre_po",
+    "hour": "Hour",
     "home_form": "HomeTeam_Form",
     "away_form": "AwayTeam_Form",
     "home_advantage": "HomeTeam_HomeAdvantage",
 
-    # Home team last-5
+    # Home team last-5 metrics
     "home_goals_scored_last5": "Home_GoalsFor_roll5",
     "home_goals_conceded_last5": "Home_GoalsAgainst_roll5",
     "home_shots_for_last5": "Home_ShotsFor_roll5",
@@ -41,7 +37,7 @@ UI_TO_MODEL_FEATURE_MAP: Dict[str, str] = {
     "home_red_cards_for_last5": "Home_RedCardsFor_roll5",
     "home_red_cards_against_last5": "Home_RedCardsAgainst_roll5",
 
-    # Away team last-5
+    # Away team last-5 metrics
     "away_goals_scored_last5": "Away_GoalsFor_roll5",
     "away_goals_conceded_last5": "Away_GoalsAgainst_roll5",
     "away_shots_for_last5": "Away_ShotsFor_roll5",
@@ -60,16 +56,12 @@ UI_TO_MODEL_FEATURE_MAP: Dict[str, str] = {
 
 
 def required_ui_fields() -> List[str]:
-    """
-    Return the list of required Streamlit input fields.
-    """
     return list(UI_TO_MODEL_FEATURE_MAP.keys())
 
 
 def build_feature_ready_row(user_inputs: Dict[str, float]) -> pd.DataFrame:
     """
-    Convert user inputs into a single-row dataframe
-    with model feature names.
+    Convert UI inputs to one-row dataframe with exact model feature names.
     """
     row = {}
 

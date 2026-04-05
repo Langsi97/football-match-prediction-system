@@ -4,9 +4,11 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT_DIR))
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
+from src.explainability.shap_explainer import compute_shap_explanation
 from src.inference.input_schema import build_feature_ready_row
 from src.inference.predict import predict_from_features
 
@@ -53,6 +55,24 @@ DEFAULT_AWAY_RED_CONCEDED = 0.10
 if "current_page" not in st.session_state:
     st.session_state["current_page"] = "Match Prediction"
 
+if "latest_prediction_ready" not in st.session_state:
+    st.session_state["latest_prediction_ready"] = False
+
+if "latest_prediction_results" not in st.session_state:
+    st.session_state["latest_prediction_results"] = None
+
+if "latest_home_team" not in st.session_state:
+    st.session_state["latest_home_team"] = ""
+
+if "latest_away_team" not in st.session_state:
+    st.session_state["latest_away_team"] = ""
+
+if "latest_shap_explanation" not in st.session_state:
+    st.session_state["latest_shap_explanation"] = None
+
+if "latest_shap_error" not in st.session_state:
+    st.session_state["latest_shap_error"] = None
+
 
 def go_to_page(page_name: str) -> None:
     st.session_state["current_page"] = page_name
@@ -72,9 +92,15 @@ def bookmaker_implied_probability(odds: float) -> float:
 
 def explain_probability_gap(probability_gap: float) -> str:
     if probability_gap > 0.03:
-        return "The model assigns a meaningfully higher probability than the bookmaker market. This may indicate possible value from the model's perspective."
+        return (
+            "The model assigns a meaningfully higher probability than the bookmaker market. "
+            "This may indicate possible value from the model's perspective."
+        )
     if probability_gap < -0.03:
-        return "The bookmaker market assigns a meaningfully higher probability than the model. This outcome may be overpriced by the market."
+        return (
+            "The bookmaker market assigns a meaningfully higher probability than the model. "
+            "This outcome may be overpriced by the market."
+        )
     return "The model and the bookmaker market are relatively aligned on this outcome."
 
 
@@ -126,6 +152,11 @@ def validate_teams(home_team: str, away_team: str) -> None:
 def get_prediction_results(user_inputs: dict) -> pd.DataFrame:
     feature_df = build_feature_ready_row(user_inputs)
     return predict_from_features(feature_df)
+
+
+def get_shap_results(user_inputs: dict) -> dict:
+    feature_df = build_feature_ready_row(user_inputs)
+    return compute_shap_explanation(feature_df=feature_df, top_n=5)
 
 
 def render_footer_navigation(show_previous: bool, show_next: bool) -> None:
@@ -413,8 +444,100 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str]:
     return user_inputs, home_team, away_team
 
 
+def render_prediction_output(results: pd.DataFrame, home_team: str, away_team: str) -> None:
+    row = results.iloc[0]
+
+    st.success(f"Predicted outcome for {home_team} vs {away_team}: {row['prediction']}")
+
+    p1, p2, p3 = st.columns(3)
+    p1.metric("Home Win Probability", f"{row.get('prob_H', 0):.2%}")
+    p2.metric("Draw Probability", f"{row.get('prob_D', 0):.2%}")
+    p3.metric("Away Win Probability", f"{row.get('prob_A', 0):.2%}")
+
+    display_df = pd.DataFrame(
+        {
+            "Home Team": [home_team],
+            "Away Team": [away_team],
+            "Prediction": [row["prediction"]],
+            "Prob_H": [row.get("prob_H", 0)],
+            "Prob_D": [row.get("prob_D", 0)],
+            "Prob_A": [row.get("prob_A", 0)],
+        }
+    )
+    st.dataframe(display_df, use_container_width=True)
+
+
+def render_shap_bar_chart(contribution_df: pd.DataFrame, top_n: int = 10) -> None:
+    if contribution_df.empty:
+        st.info("No SHAP contributions are available for plotting.")
+        return
+
+    chart_df = contribution_df.head(top_n).copy()
+    chart_df = chart_df.sort_values(by="shap_contribution", ascending=True)
+
+    fig, ax = plt.subplots(figsize=(10, 6))
+    ax.barh(chart_df["feature"], chart_df["shap_contribution"])
+    ax.set_xlabel("SHAP Contribution")
+    ax.set_ylabel("Feature")
+    ax.set_title("Top Feature Contributions for the Predicted Outcome")
+    plt.tight_layout()
+
+    st.pyplot(fig)
+    plt.close(fig)
+
+
+def render_explainability_section(shap_results: dict) -> None:
+    st.markdown("---")
+    st.subheader("Model Explainability Dashboard")
+    st.caption(
+        "This section explains which input features most strongly supported or opposed the model's predicted outcome."
+    )
+
+    predicted_class_label = shap_results["predicted_class_label"]
+    contribution_df = shap_results["feature_contributions_df"]
+    top_positive_df = shap_results["top_positive_df"]
+    top_negative_df = shap_results["top_negative_df"]
+
+    st.info(f"Explanation target class: {predicted_class_label}")
+
+    c1, c2 = st.columns(2)
+
+    with c1:
+        st.markdown("### Top Factors Supporting the Prediction")
+        if top_positive_df.empty:
+            st.write("No positive contributors found.")
+        else:
+            st.dataframe(
+                top_positive_df[["feature", "feature_value", "shap_contribution"]],
+                use_container_width=True,
+            )
+
+    with c2:
+        st.markdown("### Top Factors Opposing the Prediction")
+        if top_negative_df.empty:
+            st.write("No negative contributors found.")
+        else:
+            st.dataframe(
+                top_negative_df[["feature", "feature_value", "shap_contribution"]],
+                use_container_width=True,
+            )
+
+    st.markdown("### SHAP Contribution Chart")
+    render_shap_bar_chart(contribution_df=contribution_df, top_n=10)
+
+    st.markdown("### Full Feature Contribution Table")
+    st.dataframe(
+        contribution_df[
+            ["feature", "feature_value", "shap_contribution", "direction", "abs_contribution"]
+        ],
+        use_container_width=True,
+    )
+
+
 st.title("⚽ Jupiler Pro League Match Prediction System")
-st.caption("Belgian Jupiler Pro League focused. Enter match features on page 1, then analyse bookmaker bias on page 2.")
+st.caption(
+    "Belgian Jupiler Pro League focused. Enter match features on page 1, then analyse bookmaker bias on page 2."
+)
 render_disclaimer()
 
 selected_page = st.radio(
@@ -429,39 +552,56 @@ st.session_state["current_page"] = selected_page
 if st.session_state["current_page"] == "Match Prediction":
     user_inputs, home_team, away_team = collect_model_inputs("prediction_page")
 
-    if st.button("Predict Match Outcome", use_container_width=True, key="predict_button"):
+    prediction_triggered = st.button(
+        "Predict Match Outcome",
+        use_container_width=True,
+        key="predict_button",
+    )
+
+    if prediction_triggered:
         try:
             validate_teams(home_team, away_team)
 
             results = get_prediction_results(user_inputs)
-            row = results.iloc[0]
 
             st.session_state["latest_prediction_results"] = results
             st.session_state["latest_home_team"] = home_team
             st.session_state["latest_away_team"] = away_team
             st.session_state["latest_prediction_ready"] = True
 
-            st.success(f"Predicted outcome for {home_team} vs {away_team}: {row['prediction']}")
+            st.session_state["latest_shap_explanation"] = None
+            st.session_state["latest_shap_error"] = None
 
-            p1, p2, p3 = st.columns(3)
-            p1.metric("Home Win Probability", f"{row.get('prob_H', 0):.2%}")
-            p2.metric("Draw Probability", f"{row.get('prob_D', 0):.2%}")
-            p3.metric("Away Win Probability", f"{row.get('prob_A', 0):.2%}")
+            try:
+                shap_results = get_shap_results(user_inputs)
+                st.session_state["latest_shap_explanation"] = shap_results
+            except Exception as shap_error:
+                st.session_state["latest_shap_error"] = str(shap_error)
 
-            display_df = pd.DataFrame(
-                {
-                    "Home Team": [home_team],
-                    "Away Team": [away_team],
-                    "Prediction": [row["prediction"]],
-                    "Prob_H": [row.get("prob_H", 0)],
-                    "Prob_D": [row.get("prob_D", 0)],
-                    "Prob_A": [row.get("prob_A", 0)],
-                }
-            )
-            st.dataframe(display_df, use_container_width=True)
+        except Exception as prediction_error:
+            st.session_state["latest_prediction_ready"] = False
+            st.session_state["latest_prediction_results"] = None
+            st.session_state["latest_shap_explanation"] = None
+            st.session_state["latest_shap_error"] = None
+            st.error(f"Prediction failed: {prediction_error}")
 
-        except Exception as e:
-            st.error(f"Prediction failed: {e}")
+    if st.session_state.get("latest_prediction_ready", False):
+        results = st.session_state.get("latest_prediction_results")
+        saved_home_team = st.session_state.get("latest_home_team", "")
+        saved_away_team = st.session_state.get("latest_away_team", "")
+        shap_results = st.session_state.get("latest_shap_explanation")
+        shap_error = st.session_state.get("latest_shap_error")
+
+        if results is not None:
+            render_prediction_output(results, saved_home_team, saved_away_team)
+
+            if shap_error:
+                st.warning(
+                    f"Prediction succeeded, but explainability could not be generated: {shap_error}"
+                )
+
+            if shap_results is not None:
+                render_explainability_section(shap_results)
 
     render_footer_navigation(show_previous=False, show_next=True)
 
@@ -478,9 +618,6 @@ elif st.session_state["current_page"] == "Analyse Bookmaker Bias":
         c1.text_input("Home Team", value=home_team, disabled=True, key="bias_home_team_display")
         c2.text_input("Away Team", value=away_team, disabled=True, key="bias_away_team_display")
 
-        # -----------------------------
-        # 3-outcome bookmaker analysis
-        # -----------------------------
         st.subheader("Insert Bookmaker Odds")
         b1, b2, b3 = st.columns(3)
         bookmaker_home_odds = b1.number_input(
@@ -574,9 +711,6 @@ elif st.session_state["current_page"] == "Analyse Bookmaker Bias":
             except Exception as e:
                 st.error(f"Bias analysis failed: {e}")
 
-        # -----------------------------
-        # Bonus: 2-outcome overround
-        # -----------------------------
         st.markdown("---")
         st.subheader("Bonus: 2-Outcome Overround Calculator")
         st.caption("Useful for markets such as Over/Under, Yes/No, or any two-way bookmaker market.")
@@ -646,5 +780,3 @@ elif st.session_state["current_page"] == "Analyse Bookmaker Bias":
                 st.error(f"2-outcome analysis failed: {e}")
 
     render_footer_navigation(show_previous=True, show_next=False)
-
-      
