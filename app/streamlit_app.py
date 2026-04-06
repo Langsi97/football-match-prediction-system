@@ -10,8 +10,8 @@ What this code does:
 - The user always inputs the home and away team pre-match league positions manually,
   whether using manual entry or file upload mode.
 - Runs the trained model to predict Home / Draw / Away probabilities.
-- Generates SHAP-based local explainability when possible.
-- Shows a SHAP debug view so class label, class position, and probabilities are transparent.
+- Generates SHAP-based local explainability for the exact class already predicted by the app.
+- Keeps the SHAP dashboard aligned with the prediction output shown to the user.
 - Page 2 compares model probabilities against bookmaker odds and computes overround.
 """
 
@@ -67,6 +67,9 @@ CLASS_NAME_MAP = {
     "H": "Home Win",
     "D": "Draw",
     "A": "Away Win",
+    "Home Win": "Home Win",
+    "Draw": "Draw",
+    "Away Win": "Away Win",
 }
 
 DEFAULT_HOUR = 20.0
@@ -100,7 +103,7 @@ OPTIONAL_UPLOAD_COLUMNS_WITH_DEFAULTS = {
     "HY": DEFAULT_HOME_YELLOW_REGISTERED,
     "AY": DEFAULT_AWAY_YELLOW_REGISTERED,
     "HR": DEFAULT_HOME_RED_REGISTERED,
-    "AR": DEFAULT_AWAY_RED_REGISTERED,
+    "AR": DEFAULT_AWAY_RED_CONCEDED,
     "Time": None,
 }
 
@@ -138,7 +141,7 @@ def go_to_page(page_name: str) -> None:
 
 def normalize_prediction_label(prediction_value) -> str:
     """
-    Convert raw model prediction output into a business-friendly label.
+    Convert a raw prediction label into a business-friendly display label.
     """
     prediction_str = str(prediction_value)
     return CLASS_NAME_MAP.get(prediction_value, CLASS_NAME_MAP.get(prediction_str, prediction_str))
@@ -241,12 +244,17 @@ def get_prediction_results(user_inputs: dict) -> pd.DataFrame:
     return predict_from_features(feature_df)
 
 
-def get_shap_results(user_inputs: dict) -> dict:
+def get_shap_results(user_inputs: dict, target_prediction_label) -> dict:
     """
-    Build the feature row and compute local SHAP explainability.
+    Build the feature row and compute local SHAP explainability
+    for the exact class already predicted by the app.
     """
     feature_df = build_feature_ready_row(user_inputs)
-    return compute_shap_explanation(feature_df=feature_df, top_n=5)
+    return compute_shap_explanation(
+        feature_df=feature_df,
+        top_n=5,
+        target_prediction_label=target_prediction_label,
+    )
 
 
 def render_footer_navigation(show_previous: bool, show_next: bool) -> None:
@@ -544,10 +552,7 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         value=1.0,
         step=0.1,
         key=f"{key_prefix}_{prefix}_goals_registered",
-        help=(
-            "Average goals scored by the team across its last 5 matches. "
-            "Add goals scored in the last 5 matches and divide by 5."
-        ),
+        help="Average goals scored by the team across its last 5 matches.",
     )
     values[f"{prefix}_goals_conceded_last5"] = c2.number_input(
         "Goals conceded",
@@ -555,10 +560,7 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         value=1.0,
         step=0.1,
         key=f"{key_prefix}_{prefix}_goals_conceded",
-        help=(
-            "Average goals conceded by the team across its last 5 matches. "
-            "Take goals allowed in the last 5 matches, sum them, then divide by 5."
-        ),
+        help="Average goals conceded by the team across its last 5 matches.",
     )
 
     values[f"{prefix}_shots_for_last5"] = c1.number_input(
@@ -567,10 +569,7 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         value=4.0,
         step=0.1,
         key=f"{key_prefix}_{prefix}_shots_registered",
-        help=(
-            "Average total shots attempted by the team over its last 5 matches. "
-            "Add the last 5 values and divide by 5."
-        ),
+        help="Average total shots attempted by the team over its last 5 matches.",
     )
     values[f"{prefix}_shots_against_last5"] = c2.number_input(
         "Shots conceded",
@@ -578,10 +577,7 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         value=4.0,
         step=0.1,
         key=f"{key_prefix}_{prefix}_shots_conceded",
-        help=(
-            "Average total shots allowed by the team over its last 5 matches. "
-            "Use opponent shot totals from the last 5 matches, sum them, then divide by 5."
-        ),
+        help="Average total shots allowed by the team over its last 5 matches.",
     )
 
     values[f"{prefix}_shots_on_target_for_last5"] = c1.number_input(
@@ -590,10 +586,7 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         value=2.0,
         step=0.1,
         key=f"{key_prefix}_{prefix}_shots_ot_registered",
-        help=(
-            "Average shots on target made by the team across its last 5 matches. "
-            "Sum the last 5 shots-on-target values and divide by 5."
-        ),
+        help="Average shots on target made by the team across its last 5 matches.",
     )
     values[f"{prefix}_shots_on_target_against_last5"] = c2.number_input(
         "Shots on target conceded",
@@ -601,10 +594,7 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         value=2.0,
         step=0.1,
         key=f"{key_prefix}_{prefix}_shots_ot_conceded",
-        help=(
-            "Average shots on target allowed by the team across its last 5 matches. "
-            "Use opponent shots on target from the last 5 matches, sum them, then divide by 5."
-        ),
+        help="Average shots on target allowed by the team across its last 5 matches.",
     )
 
     values[f"{prefix}_fouls_for_last5"] = c1.number_input(
@@ -613,10 +603,7 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         value=10.0,
         step=0.1,
         key=f"{key_prefix}_{prefix}_fouls_registered",
-        help=(
-            "Average fouls committed by the team over its last 5 matches. "
-            "Sum the last 5 foul totals and divide by 5."
-        ),
+        help="Average fouls committed by the team over its last 5 matches.",
     )
     values[f"{prefix}_fouls_against_last5"] = c2.number_input(
         "Fouls conceded",
@@ -624,10 +611,7 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         value=10.0,
         step=0.1,
         key=f"{key_prefix}_{prefix}_fouls_conceded",
-        help=(
-            "Average fouls won by the team, or equivalently fouls committed by opponents, over the last 5 matches. "
-            "Sum the last 5 values and divide by 5."
-        ),
+        help="Average fouls won by the team over the last 5 matches.",
     )
 
     values[f"{prefix}_corners_for_last5"] = c1.number_input(
@@ -636,10 +620,7 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         value=5.0,
         step=0.1,
         key=f"{key_prefix}_{prefix}_corners_registered",
-        help=(
-            "Average corners earned by the team across its last 5 matches. "
-            "Sum the last 5 values and divide by 5."
-        ),
+        help="Average corners earned by the team across its last 5 matches.",
     )
     values[f"{prefix}_corners_against_last5"] = c2.number_input(
         "Corners conceded",
@@ -647,10 +628,7 @@ def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
         value=5.0,
         step=0.1,
         key=f"{key_prefix}_{prefix}_corners_conceded",
-        help=(
-            "Average corners allowed by the team across its last 5 matches. "
-            "Use opponent corners from the last 5 matches, sum them, then divide by 5."
-        ),
+        help="Average corners allowed by the team across its last 5 matches.",
     )
 
     values[f"{prefix}_yellow_cards_for_last5"] = c1.number_input(
@@ -807,10 +785,7 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str, str, pd.DataF
             value=0.50,
             step=0.01,
             key=f"{key_prefix}_home_form",
-            help=(
-                "Team form = total points from the last 5 matches divided by 15. "
-                "Win = 3 points, draw = 1 point, loss = 0 points."
-            ),
+            help="Team form = total points from the last 5 matches divided by 15.",
         )
 
     with right:
@@ -822,10 +797,7 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str, str, pd.DataF
             value=0.50,
             step=0.01,
             key=f"{key_prefix}_away_form",
-            help=(
-                "Team form = total points from the last 5 matches divided by 15. "
-                "Win = 3 points, draw = 1 point, loss = 0 points."
-            ),
+            help="Team form = total points from the last 5 matches divided by 15.",
         )
 
     st.markdown("---")
@@ -902,9 +874,13 @@ def render_shap_bar_chart(contribution_df: pd.DataFrame, top_n: int = 10) -> Non
     plt.close(fig)
 
 
-def render_explainability_section(shap_results: dict) -> None:
+def render_explainability_section(shap_results: dict, prediction_results: pd.DataFrame) -> None:
     """
-    Render the SHAP explainability dashboard with explicit class debugging.
+    Render the SHAP explainability dashboard.
+
+    Design rule:
+    - prediction_results is the single source of truth for displayed prediction and probabilities
+    - SHAP only explains that already-predicted class
     """
     st.markdown("---")
     st.subheader("Model Explainability Dashboard")
@@ -912,34 +888,36 @@ def render_explainability_section(shap_results: dict) -> None:
         "This section explains which input features most strongly supported or opposed the model's predicted outcome."
     )
 
-    predicted_class_label = shap_results["predicted_class_label"]
-    predicted_class_name = shap_results.get(
-        "predicted_class_name",
-        normalize_prediction_label(predicted_class_label),
-    )
-    predicted_class_position = shap_results.get("predicted_class_position", "unknown")
-    class_labels = shap_results.get("class_labels", [])
-    probabilities = shap_results.get("probabilities", [])
+    prediction_row = prediction_results.iloc[0]
+    app_raw_prediction = prediction_row["prediction"]
+    app_prediction_name = normalize_prediction_label(app_raw_prediction)
+
+    target_class_name = shap_results.get("target_class_name", app_prediction_name)
+    target_class_label = shap_results.get("target_class_label", app_raw_prediction)
+    target_class_position = shap_results.get("target_class_position", "unknown")
 
     contribution_df = shap_results["feature_contributions_df"]
     top_positive_df = shap_results["top_positive_df"]
     top_negative_df = shap_results["top_negative_df"]
 
     st.info(
-        f"Explanation target class: {predicted_class_name} "
-        f"(label={predicted_class_label}, class_position={predicted_class_position})"
+        f"Explanation target class: {target_class_name} "
+        f"(prediction_output={app_raw_prediction}, internal_label={target_class_label}, class_position={target_class_position})"
     )
 
-    if len(class_labels) > 0 and len(probabilities) > 0:
-        debug_df = pd.DataFrame(
-            {
-                "class_label": class_labels,
-                "class_name": [normalize_prediction_label(label) for label in class_labels],
-                "predicted_probability": probabilities,
-            }
-        )
-        st.markdown("### Prediction Debug View")
-        st.dataframe(debug_df, use_container_width=True)
+    debug_df = pd.DataFrame(
+        {
+            "class_name": ["Home Win", "Draw", "Away Win"],
+            "predicted_probability": [
+                float(prediction_row.get("prob_H", 0)),
+                float(prediction_row.get("prob_D", 0)),
+                float(prediction_row.get("prob_A", 0)),
+            ],
+        }
+    )
+
+    st.markdown("### Prediction Debug View")
+    st.dataframe(debug_df, use_container_width=True)
 
     c1, c2 = st.columns(2)
 
@@ -1028,7 +1006,11 @@ if st.session_state["current_page"] == "Match Prediction":
             st.session_state["latest_shap_error"] = None
 
             try:
-                shap_results = get_shap_results(user_inputs)
+                predicted_label_for_shap = results.iloc[0]["prediction"]
+                shap_results = get_shap_results(
+                    user_inputs=user_inputs,
+                    target_prediction_label=predicted_label_for_shap,
+                )
                 st.session_state["latest_shap_explanation"] = shap_results
             except Exception as shap_error:
                 st.session_state["latest_shap_error"] = str(shap_error)
@@ -1061,8 +1043,8 @@ if st.session_state["current_page"] == "Match Prediction":
                     f"Prediction succeeded, but explainability could not be generated: {shap_error}"
                 )
 
-            if shap_results is not None:
-                render_explainability_section(shap_results)
+            if shap_results is not None and results is not None:
+                render_explainability_section(shap_results, results)
 
     render_footer_navigation(show_previous=False, show_next=True)
 

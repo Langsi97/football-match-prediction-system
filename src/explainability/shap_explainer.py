@@ -12,10 +12,35 @@ import shap
 MODEL_PATH = Path("artifacts/models/random_forest_best.joblib")
 FEATURE_CONTRACT_PATH = Path("artifacts/final_feature_contract.csv")
 
+# Business-facing class names
 CLASS_NAME_MAP = {
     0: "Draw",
     1: "Home Win",
     2: "Away Win",
+    "0": "Draw",
+    "1": "Home Win",
+    "2": "Away Win",
+    "H": "Home Win",
+    "D": "Draw",
+    "A": "Away Win",
+}
+
+# External prediction output -> internal model label
+# Your app prediction output uses H / D / A, while the RF model appears to use 0 / 1 / 2.
+# Based on your own mapping:
+# - 1 = Home Win
+# - 0 = Draw
+# - 2 = Away Win
+EXTERNAL_TO_INTERNAL_LABEL_MAP = {
+    "H": 1,
+    "D": 0,
+    "A": 2,
+    1: 1,
+    0: 0,
+    2: 2,
+    "1": 1,
+    "0": 0,
+    "2": 2,
 }
 
 
@@ -67,8 +92,6 @@ def align_features_to_training_schema(
     Priority:
     1. Use model.feature_names_in_ if available
     2. Fall back to saved feature contract CSV
-
-    This prevents sklearn errors caused by feature order mismatch.
     """
     if feature_df.shape[0] != 1:
         raise ValueError("feature_df must contain exactly one row.")
@@ -79,7 +102,6 @@ def align_features_to_training_schema(
         expected_features = load_feature_contract(feature_contract_path)
 
     missing_features = [col for col in expected_features if col not in feature_df.columns]
-    extra_features = [col for col in feature_df.columns if col not in expected_features]
 
     if missing_features:
         raise ValueError(
@@ -87,44 +109,93 @@ def align_features_to_training_schema(
         )
 
     aligned_df = feature_df.reindex(columns=expected_features)
-
-    if extra_features:
-        # Extra columns are safely dropped by reindexing above.
-        pass
-
     return aligned_df
 
 
-def get_prediction_details(model: Any, feature_df: pd.DataFrame) -> dict[str, Any]:
+def normalize_prediction_label(prediction_label: Any) -> str:
     """
-    Get prediction diagnostics for a single-row feature dataframe.
+    Convert a raw label into a human-readable class name.
+    """
+    prediction_str = str(prediction_label)
+    return CLASS_NAME_MAP.get(prediction_label, CLASS_NAME_MAP.get(prediction_str, prediction_str))
 
-    Important distinction:
-    - predicted_class_position: index position inside predict_proba output
-    - predicted_class_label: actual class label from model.classes_
+
+def convert_external_prediction_to_internal_label(prediction_label: Any) -> Any:
+    """
+    Convert app-level prediction output into the model's internal class label.
 
     Example:
-    if model.classes_ = [0, 1, 2] and probabilities = [0.10, 0.70, 0.20]
-    then:
-    - predicted_class_position = 1
-    - predicted_class_label = 1
+    - app output H -> model label 1
+    - app output D -> model label 0
+    - app output A -> model label 2
     """
-    probabilities = model.predict_proba(feature_df)[0]
+    prediction_str = str(prediction_label)
+    if prediction_label in EXTERNAL_TO_INTERNAL_LABEL_MAP:
+        return EXTERNAL_TO_INTERNAL_LABEL_MAP[prediction_label]
+    if prediction_str in EXTERNAL_TO_INTERNAL_LABEL_MAP:
+        return EXTERNAL_TO_INTERNAL_LABEL_MAP[prediction_str]
+    return prediction_label
 
+
+def resolve_target_class_position(
+    model: Any,
+    target_prediction_label: Any | None,
+    feature_df: pd.DataFrame,
+) -> tuple[int, Any, str, np.ndarray, list[Any]]:
+    """
+    Resolve which class SHAP should explain.
+
+    Priority:
+    1. If target_prediction_label is provided from the app prediction result,
+       explain that exact class.
+    2. Otherwise, fall back to the model's own argmax prediction.
+
+    Returns:
+    - target_class_position
+    - target_class_label
+    - target_class_name
+    - model_probabilities
+    - class_labels
+    """
     if not hasattr(model, "classes_"):
-        raise ValueError("The model does not expose classes_. Cannot resolve class labels safely.")
+        raise ValueError("The model does not expose classes_.")
 
     class_labels = list(model.classes_)
-    predicted_class_position = int(np.argmax(probabilities))
-    predicted_class_label = class_labels[predicted_class_position]
+    probabilities = model.predict_proba(feature_df)[0]
 
-    return {
-        "probabilities": probabilities,
-        "class_labels": class_labels,
-        "predicted_class_position": predicted_class_position,
-        "predicted_class_label": predicted_class_label,
-        "predicted_class_name": CLASS_NAME_MAP.get(predicted_class_label, str(predicted_class_label)),
-    }
+    if target_prediction_label is not None:
+        internal_target_label = convert_external_prediction_to_internal_label(target_prediction_label)
+
+        if internal_target_label not in class_labels:
+            raise ValueError(
+                f"Target prediction label '{target_prediction_label}' maps to internal label "
+                f"'{internal_target_label}', but that label is not present in model.classes_={class_labels}"
+            )
+
+        target_class_position = class_labels.index(internal_target_label)
+        target_class_label = internal_target_label
+        target_class_name = normalize_prediction_label(target_prediction_label)
+
+        return (
+            target_class_position,
+            target_class_label,
+            target_class_name,
+            probabilities,
+            class_labels,
+        )
+
+    # Fallback: use model argmax if no explicit target class was provided
+    target_class_position = int(np.argmax(probabilities))
+    target_class_label = class_labels[target_class_position]
+    target_class_name = normalize_prediction_label(target_class_label)
+
+    return (
+        target_class_position,
+        target_class_label,
+        target_class_name,
+        probabilities,
+        class_labels,
+    )
 
 
 def compute_tree_shap_values(model: Any, feature_df: pd.DataFrame) -> Any:
@@ -138,25 +209,18 @@ def compute_tree_shap_values(model: Any, feature_df: pd.DataFrame) -> Any:
 
 def extract_class_shap_values(
     shap_values: Any,
-    predicted_class_position: int,
+    target_class_position: int,
 ) -> np.ndarray:
     """
-    Extract SHAP values corresponding to the predicted class position.
-
-    Notes:
-    - For multiclass classifiers, SHAP output may come back as:
-      1. a list of arrays, one per class
-      2. a 3D numpy array with class axis
-      3. a 2D array in some binary/simplified cases
-    - We must select by class POSITION, not by business class label.
+    Extract SHAP values corresponding to the requested class position.
     """
     if isinstance(shap_values, list):
-        return np.asarray(shap_values[predicted_class_position][0])
+        return np.asarray(shap_values[target_class_position][0])
 
     shap_values = np.asarray(shap_values)
 
     if shap_values.ndim == 3:
-        return shap_values[0, :, predicted_class_position]
+        return shap_values[0, :, target_class_position]
 
     if shap_values.ndim == 2:
         return shap_values[0]
@@ -202,18 +266,14 @@ def compute_shap_explanation(
     feature_df: pd.DataFrame,
     model_path: Path = MODEL_PATH,
     top_n: int = 5,
+    target_prediction_label: Any | None = None,
 ) -> dict[str, Any]:
     """
     Compute a local SHAP explanation for a single-row input.
 
-    Returns both:
-    - class position used for SHAP extraction
-    - actual predicted class label
-    - class name
-    - raw probabilities
-    - model class order
-
-    This makes debugging class-mapping issues much easier.
+    Important:
+    - If target_prediction_label is provided, SHAP explains that exact class.
+    - This keeps SHAP aligned with the app's prediction output.
     """
     if feature_df.empty:
         raise ValueError("feature_df is empty.")
@@ -224,16 +284,22 @@ def compute_shap_explanation(
     model = load_model(model_path=model_path)
     aligned_feature_df = align_features_to_training_schema(feature_df, model=model)
 
-    prediction_details = get_prediction_details(model, aligned_feature_df)
-
-    predicted_class_position = prediction_details["predicted_class_position"]
-    predicted_class_label = prediction_details["predicted_class_label"]
-    predicted_class_name = prediction_details["predicted_class_name"]
+    (
+        target_class_position,
+        target_class_label,
+        target_class_name,
+        model_probabilities,
+        class_labels,
+    ) = resolve_target_class_position(
+        model=model,
+        target_prediction_label=target_prediction_label,
+        feature_df=aligned_feature_df,
+    )
 
     shap_values = compute_tree_shap_values(model, aligned_feature_df)
     class_shap_values = extract_class_shap_values(
         shap_values=shap_values,
-        predicted_class_position=predicted_class_position,
+        target_class_position=target_class_position,
     )
 
     contribution_df = build_feature_contributions_df(
@@ -256,11 +322,11 @@ def compute_shap_explanation(
     )
 
     return {
-        "predicted_class_position": predicted_class_position,
-        "predicted_class_label": predicted_class_label,
-        "predicted_class_name": predicted_class_name,
-        "class_labels": prediction_details["class_labels"],
-        "probabilities": prediction_details["probabilities"],
+        "target_class_position": target_class_position,
+        "target_class_label": target_class_label,
+        "target_class_name": target_class_name,
+        "model_class_labels": class_labels,
+        "model_probabilities": model_probabilities,
         "feature_contributions_df": contribution_df,
         "top_positive_df": top_positive_df,
         "top_negative_df": top_negative_df,
