@@ -12,6 +12,12 @@ import shap
 MODEL_PATH = Path("artifacts/models/random_forest_best.joblib")
 FEATURE_CONTRACT_PATH = Path("artifacts/final_feature_contract.csv")
 
+CLASS_NAME_MAP = {
+    0: "Draw",
+    1: "Home Win",
+    2: "Away Win",
+}
+
 
 def load_model(model_path: Path = MODEL_PATH) -> Any:
     """
@@ -89,21 +95,36 @@ def align_features_to_training_schema(
     return aligned_df
 
 
-def get_predicted_class_index(model: Any, feature_df: pd.DataFrame) -> int:
+def get_prediction_details(model: Any, feature_df: pd.DataFrame) -> dict[str, Any]:
     """
-    Get the predicted class index for a single-row feature dataframe.
+    Get prediction diagnostics for a single-row feature dataframe.
+
+    Important distinction:
+    - predicted_class_position: index position inside predict_proba output
+    - predicted_class_label: actual class label from model.classes_
+
+    Example:
+    if model.classes_ = [0, 1, 2] and probabilities = [0.10, 0.70, 0.20]
+    then:
+    - predicted_class_position = 1
+    - predicted_class_label = 1
     """
     probabilities = model.predict_proba(feature_df)[0]
-    return int(np.argmax(probabilities))
 
+    if not hasattr(model, "classes_"):
+        raise ValueError("The model does not expose classes_. Cannot resolve class labels safely.")
 
-def get_predicted_class_label(model: Any, predicted_class_index: int) -> str:
-    """
-    Return the predicted class label.
-    """
-    if hasattr(model, "classes_"):
-        return str(model.classes_[predicted_class_index])
-    return str(predicted_class_index)
+    class_labels = list(model.classes_)
+    predicted_class_position = int(np.argmax(probabilities))
+    predicted_class_label = class_labels[predicted_class_position]
+
+    return {
+        "probabilities": probabilities,
+        "class_labels": class_labels,
+        "predicted_class_position": predicted_class_position,
+        "predicted_class_label": predicted_class_label,
+        "predicted_class_name": CLASS_NAME_MAP.get(predicted_class_label, str(predicted_class_label)),
+    }
 
 
 def compute_tree_shap_values(model: Any, feature_df: pd.DataFrame) -> Any:
@@ -117,18 +138,25 @@ def compute_tree_shap_values(model: Any, feature_df: pd.DataFrame) -> Any:
 
 def extract_class_shap_values(
     shap_values: Any,
-    predicted_class_index: int,
+    predicted_class_position: int,
 ) -> np.ndarray:
     """
-    Extract SHAP values corresponding to the predicted class.
+    Extract SHAP values corresponding to the predicted class position.
+
+    Notes:
+    - For multiclass classifiers, SHAP output may come back as:
+      1. a list of arrays, one per class
+      2. a 3D numpy array with class axis
+      3. a 2D array in some binary/simplified cases
+    - We must select by class POSITION, not by business class label.
     """
     if isinstance(shap_values, list):
-        return np.asarray(shap_values[predicted_class_index][0])
+        return np.asarray(shap_values[predicted_class_position][0])
 
     shap_values = np.asarray(shap_values)
 
     if shap_values.ndim == 3:
-        return shap_values[0, :, predicted_class_index]
+        return shap_values[0, :, predicted_class_position]
 
     if shap_values.ndim == 2:
         return shap_values[0]
@@ -177,6 +205,15 @@ def compute_shap_explanation(
 ) -> dict[str, Any]:
     """
     Compute a local SHAP explanation for a single-row input.
+
+    Returns both:
+    - class position used for SHAP extraction
+    - actual predicted class label
+    - class name
+    - raw probabilities
+    - model class order
+
+    This makes debugging class-mapping issues much easier.
     """
     if feature_df.empty:
         raise ValueError("feature_df is empty.")
@@ -187,13 +224,16 @@ def compute_shap_explanation(
     model = load_model(model_path=model_path)
     aligned_feature_df = align_features_to_training_schema(feature_df, model=model)
 
-    predicted_class_index = get_predicted_class_index(model, aligned_feature_df)
-    predicted_class_label = get_predicted_class_label(model, predicted_class_index)
+    prediction_details = get_prediction_details(model, aligned_feature_df)
+
+    predicted_class_position = prediction_details["predicted_class_position"]
+    predicted_class_label = prediction_details["predicted_class_label"]
+    predicted_class_name = prediction_details["predicted_class_name"]
 
     shap_values = compute_tree_shap_values(model, aligned_feature_df)
     class_shap_values = extract_class_shap_values(
         shap_values=shap_values,
-        predicted_class_index=predicted_class_index,
+        predicted_class_position=predicted_class_position,
     )
 
     contribution_df = build_feature_contributions_df(
@@ -216,8 +256,11 @@ def compute_shap_explanation(
     )
 
     return {
-        "predicted_class_index": predicted_class_index,
+        "predicted_class_position": predicted_class_position,
         "predicted_class_label": predicted_class_label,
+        "predicted_class_name": predicted_class_name,
+        "class_labels": prediction_details["class_labels"],
+        "probabilities": prediction_details["probabilities"],
         "feature_contributions_df": contribution_df,
         "top_positive_df": top_positive_df,
         "top_negative_df": top_negative_df,
