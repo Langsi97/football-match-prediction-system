@@ -1,0 +1,11 @@
+streamlit
+pandas
+numpy
+requests
+matplotlib
+shap
+joblib
+pyyaml
+openpyxl
+python-dotenv
+great-expectations
