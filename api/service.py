@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import Any
 
-import pandas as pd
-
 from src.inference.input_schema import build_feature_ready_row
 from src.inference.predict import predict_from_features
 
@@ -11,11 +9,6 @@ from src.inference.predict import predict_from_features
 def predict_match(payload: dict[str, Any]) -> dict[str, Any]:
     """
     Run model inference from raw API payload.
-
-    What this function does:
-    - converts incoming request payload into a one-row dataframe
-    - aligns features using the existing inference pipeline
-    - returns prediction and probabilities as a plain dictionary
     """
     feature_df = build_feature_ready_row(payload)
     prediction_df = predict_from_features(feature_df)

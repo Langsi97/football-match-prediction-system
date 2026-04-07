@@ -15,7 +15,7 @@ app = FastAPI(
 @app.get("/health")
 def health_check() -> dict[str, str]:
     """
-    Simple health endpoint for checking whether the API is running.
+    Check whether the API is running.
     """
     return {"status": "ok"}
 

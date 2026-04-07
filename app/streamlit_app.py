@@ -9,7 +9,7 @@ What this code does:
     2. upload historical match data so the app auto-computes the last-5-match features.
 - The user always inputs the home and away team pre-match league positions manually,
   whether using manual entry or file upload mode.
-- Runs the trained model to predict Home / Draw / Away probabilities.
+- Sends prediction requests to a FastAPI backend instead of loading the model directly.
 - Generates SHAP-based local explainability for the exact class already predicted by the app.
 - Keeps the SHAP dashboard aligned with the prediction output shown to the user.
 - Page 2 compares model probabilities against bookmaker odds and computes overround.
@@ -23,11 +23,11 @@ sys.path.append(str(ROOT_DIR))
 
 import matplotlib.pyplot as plt
 import pandas as pd
+import requests
 import streamlit as st
 
 from src.explainability.shap_explainer import compute_shap_explanation
 from src.inference.input_schema import build_feature_ready_row
-from src.inference.predict import predict_from_features
 
 
 st.set_page_config(
@@ -35,6 +35,8 @@ st.set_page_config(
     page_icon="⚽",
     layout="wide",
 )
+
+API_URL = "http://127.0.0.1:8000/predict"
 
 JPL_TEAMS = [
     "Anderlecht",
@@ -133,42 +135,27 @@ if "latest_auto_features_df" not in st.session_state:
 
 
 def go_to_page(page_name: str) -> None:
-    """
-    Change the active page stored in Streamlit session state.
-    """
     st.session_state["current_page"] = page_name
 
 
 def normalize_prediction_label(prediction_value) -> str:
-    """
-    Convert a raw prediction label into a business-friendly display label.
-    """
     prediction_str = str(prediction_value)
     return CLASS_NAME_MAP.get(prediction_value, CLASS_NAME_MAP.get(prediction_str, prediction_str))
 
 
 def fair_odds_from_probability(prob: float) -> float:
-    """
-    Convert a probability into fair decimal odds.
-    """
     if prob <= 0:
         return float("inf")
     return 1.0 / prob
 
 
 def bookmaker_implied_probability(odds: float) -> float:
-    """
-    Convert bookmaker decimal odds into implied probability.
-    """
     if odds <= 0:
         return 0.0
     return 1.0 / odds
 
 
 def explain_probability_gap(probability_gap: float) -> str:
-    """
-    Interpret the difference between model probability and bookmaker probability.
-    """
     if probability_gap > 0.03:
         return (
             "The model assigns a meaningfully higher probability than the bookmaker market. "
@@ -183,9 +170,6 @@ def explain_probability_gap(probability_gap: float) -> str:
 
 
 def explain_overround(overround: float) -> str:
-    """
-    Explain the meaning of a 3-way bookmaker overround.
-    """
     if overround > 0:
         return (
             f"The overround is positive at {overround:.2%}. "
@@ -205,9 +189,6 @@ def explain_overround(overround: float) -> str:
 
 
 def explain_two_way_overround(overround: float) -> str:
-    """
-    Explain the meaning of a 2-way bookmaker overround.
-    """
     if overround > 0:
         return (
             f"The 2-outcome market has a positive overround of {overround:.2%}. "
@@ -225,9 +206,6 @@ def explain_two_way_overround(overround: float) -> str:
 
 
 def validate_teams(home_team: str, away_team: str) -> None:
-    """
-    Validate that both teams are present and different.
-    """
     if not home_team:
         raise ValueError("Please provide a Home Team.")
     if not away_team:
@@ -238,17 +216,31 @@ def validate_teams(home_team: str, away_team: str) -> None:
 
 def get_prediction_results(user_inputs: dict) -> pd.DataFrame:
     """
-    Build the feature row and run the trained inference pipeline.
+    Call FastAPI backend instead of local model.
     """
-    feature_df = build_feature_ready_row(user_inputs)
-    return predict_from_features(feature_df)
+    try:
+        response = requests.post(API_URL, json=user_inputs, timeout=30)
+
+        if response.status_code != 200:
+            raise ValueError(f"API error {response.status_code}: {response.text}")
+
+        data = response.json()
+
+        result_df = pd.DataFrame(
+            {
+                "prediction": [data["prediction"]],
+                "prob_H": [data["prob_H"]],
+                "prob_D": [data["prob_D"]],
+                "prob_A": [data["prob_A"]],
+            }
+        )
+        return result_df
+
+    except Exception as exc:
+        raise RuntimeError(f"Failed to call prediction API: {exc}") from exc
 
 
 def get_shap_results(user_inputs: dict, target_prediction_label) -> dict:
-    """
-    Build the feature row and compute local SHAP explainability
-    for the exact class already predicted by the app.
-    """
     feature_df = build_feature_ready_row(user_inputs)
     return compute_shap_explanation(
         feature_df=feature_df,
@@ -258,9 +250,6 @@ def get_shap_results(user_inputs: dict, target_prediction_label) -> dict:
 
 
 def render_footer_navigation(show_previous: bool, show_next: bool) -> None:
-    """
-    Render page navigation buttons at the bottom of the page.
-    """
     st.markdown("---")
     left, right = st.columns(2)
 
@@ -286,9 +275,6 @@ def render_footer_navigation(show_previous: bool, show_next: bool) -> None:
 
 
 def render_disclaimer() -> None:
-    """
-    Display the legal and responsible-use warning.
-    """
     st.warning(
         "Disclaimer: This application is provided strictly for informational and educational purposes only. "
         "It does not constitute financial advice, betting advice, investment advice, or any guaranteed decision-support tool. "
@@ -300,9 +286,6 @@ def render_disclaimer() -> None:
 
 
 def team_input_block(prefix: str, label: str, key_prefix: str) -> str:
-    """
-    Render a reusable team input block.
-    """
     mode = st.radio(
         f"{label} input mode",
         options=["Select from list", "Type manually"],
@@ -326,9 +309,6 @@ def team_input_block(prefix: str, label: str, key_prefix: str) -> str:
 
 
 def load_uploaded_match_file(uploaded_file) -> pd.DataFrame:
-    """
-    Load an uploaded CSV or Excel file into a DataFrame.
-    """
     file_name = uploaded_file.name.lower()
 
     if file_name.endswith(".csv"):
@@ -342,9 +322,6 @@ def load_uploaded_match_file(uploaded_file) -> pd.DataFrame:
 
 
 def validate_and_prepare_uploaded_match_data(raw_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Validate and clean uploaded historical match data.
-    """
     if raw_df.empty:
         raise ValueError("The uploaded file is empty.")
 
@@ -387,14 +364,10 @@ def validate_and_prepare_uploaded_match_data(raw_df: pd.DataFrame) -> pd.DataFra
         sort_columns.append("Time")
 
     df = df.sort_values(sort_columns).reset_index(drop=True)
-
     return df
 
 
 def build_team_centric_history(matches_df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Convert match-level rows into team-centric history rows.
-    """
     home_df = pd.DataFrame(
         {
             "Date": matches_df["Date"],
@@ -444,19 +417,14 @@ def build_team_centric_history(matches_df: pd.DataFrame) -> pd.DataFrame:
     )
 
     history_df = pd.concat([home_df, away_df], ignore_index=True)
-
     history_df["points"] = 0
     history_df.loc[history_df["goals_for"] > history_df["goals_against"], "points"] = 3
     history_df.loc[history_df["goals_for"] == history_df["goals_against"], "points"] = 1
-
     history_df = history_df.sort_values(["Date", "Time"]).reset_index(drop=True)
     return history_df
 
 
 def get_team_last_n_matches(team_history_df: pd.DataFrame, team_name: str, n_matches: int = 5) -> pd.DataFrame:
-    """
-    Return the latest n matches for a team.
-    """
     team_df = team_history_df[team_history_df["team"] == team_name].copy()
     team_df = team_df.sort_values(["Date", "Time"]).reset_index(drop=True)
 
@@ -470,9 +438,6 @@ def get_team_last_n_matches(team_history_df: pd.DataFrame, team_name: str, n_mat
 
 
 def compute_team_recent_features(team_recent_df: pd.DataFrame, prefix: str) -> dict:
-    """
-    Compute recent last-5 average features for a team.
-    """
     feature_map = {
         f"{prefix}_goals_scored_last5": team_recent_df["goals_for"].mean(),
         f"{prefix}_goals_conceded_last5": team_recent_df["goals_against"].mean(),
@@ -501,9 +466,6 @@ def auto_build_user_inputs_from_uploaded_history(
     home_pre_position: float,
     away_pre_position: float,
 ) -> tuple[dict, pd.DataFrame]:
-    """
-    Build model inputs from uploaded history while keeping pre-match positions user-controlled.
-    """
     team_history_df = build_team_centric_history(uploaded_matches_df)
 
     home_recent_df = get_team_last_n_matches(team_history_df, home_team, n_matches=5)
@@ -538,140 +500,28 @@ def auto_build_user_inputs_from_uploaded_history(
 
 
 def stat_input_block(prefix: str, title: str, key_prefix: str) -> dict:
-    """
-    Render manual statistical inputs for either the home or away team.
-    """
     st.subheader(title)
     c1, c2 = st.columns(2)
 
     values = {}
-
-    values[f"{prefix}_goals_scored_last5"] = c1.number_input(
-        "Goals registered",
-        min_value=0.0,
-        value=1.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_goals_registered",
-        help="Average goals scored by the team across its last 5 matches.",
-    )
-    values[f"{prefix}_goals_conceded_last5"] = c2.number_input(
-        "Goals conceded",
-        min_value=0.0,
-        value=1.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_goals_conceded",
-        help="Average goals conceded by the team across its last 5 matches.",
-    )
-
-    values[f"{prefix}_shots_for_last5"] = c1.number_input(
-        "Shots registered",
-        min_value=0.0,
-        value=4.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_shots_registered",
-        help="Average total shots attempted by the team over its last 5 matches.",
-    )
-    values[f"{prefix}_shots_against_last5"] = c2.number_input(
-        "Shots conceded",
-        min_value=0.0,
-        value=4.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_shots_conceded",
-        help="Average total shots allowed by the team over its last 5 matches.",
-    )
-
-    values[f"{prefix}_shots_on_target_for_last5"] = c1.number_input(
-        "Shots on target registered",
-        min_value=0.0,
-        value=2.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_shots_ot_registered",
-        help="Average shots on target made by the team across its last 5 matches.",
-    )
-    values[f"{prefix}_shots_on_target_against_last5"] = c2.number_input(
-        "Shots on target conceded",
-        min_value=0.0,
-        value=2.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_shots_ot_conceded",
-        help="Average shots on target allowed by the team across its last 5 matches.",
-    )
-
-    values[f"{prefix}_fouls_for_last5"] = c1.number_input(
-        "Fouls registered",
-        min_value=0.0,
-        value=10.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_fouls_registered",
-        help="Average fouls committed by the team over its last 5 matches.",
-    )
-    values[f"{prefix}_fouls_against_last5"] = c2.number_input(
-        "Fouls conceded",
-        min_value=0.0,
-        value=10.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_fouls_conceded",
-        help="Average fouls won by the team over the last 5 matches.",
-    )
-
-    values[f"{prefix}_corners_for_last5"] = c1.number_input(
-        "Corners registered",
-        min_value=0.0,
-        value=5.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_corners_registered",
-        help="Average corners earned by the team across its last 5 matches.",
-    )
-    values[f"{prefix}_corners_against_last5"] = c2.number_input(
-        "Corners conceded",
-        min_value=0.0,
-        value=5.0,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_corners_conceded",
-        help="Average corners allowed by the team across its last 5 matches.",
-    )
-
-    values[f"{prefix}_yellow_cards_for_last5"] = c1.number_input(
-        "Yellow cards registered",
-        min_value=0.0,
-        value=DEFAULT_HOME_YELLOW_REGISTERED if prefix == "home" else DEFAULT_AWAY_YELLOW_REGISTERED,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_yellow_registered",
-        help="Average yellow cards received by the team across its last 5 matches.",
-    )
-    values[f"{prefix}_yellow_cards_against_last5"] = c2.number_input(
-        "Yellow cards conceded",
-        min_value=0.0,
-        value=DEFAULT_HOME_YELLOW_CONCEDED if prefix == "home" else DEFAULT_AWAY_YELLOW_CONCEDED,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_yellow_conceded",
-        help="Average yellow cards received by opponents across the team's last 5 matches.",
-    )
-
-    values[f"{prefix}_red_cards_for_last5"] = c1.number_input(
-        "Red cards registered",
-        min_value=0.0,
-        value=DEFAULT_HOME_RED_REGISTERED if prefix == "home" else DEFAULT_AWAY_RED_REGISTERED,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_red_registered",
-        help="Average red cards received by the team across its last 5 matches.",
-    )
-    values[f"{prefix}_red_cards_against_last5"] = c2.number_input(
-        "Red cards conceded",
-        min_value=0.0,
-        value=DEFAULT_HOME_RED_CONCEDED if prefix == "home" else DEFAULT_AWAY_RED_CONCEDED,
-        step=0.1,
-        key=f"{key_prefix}_{prefix}_red_conceded",
-        help="Average red cards received by opponents across the team's last 5 matches.",
-    )
-
+    values[f"{prefix}_goals_scored_last5"] = c1.number_input("Goals registered", min_value=0.0, value=1.0, step=0.1, key=f"{key_prefix}_{prefix}_goals_registered")
+    values[f"{prefix}_goals_conceded_last5"] = c2.number_input("Goals conceded", min_value=0.0, value=1.0, step=0.1, key=f"{key_prefix}_{prefix}_goals_conceded")
+    values[f"{prefix}_shots_for_last5"] = c1.number_input("Shots registered", min_value=0.0, value=4.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_registered")
+    values[f"{prefix}_shots_against_last5"] = c2.number_input("Shots conceded", min_value=0.0, value=4.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_conceded")
+    values[f"{prefix}_shots_on_target_for_last5"] = c1.number_input("Shots on target registered", min_value=0.0, value=2.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_ot_registered")
+    values[f"{prefix}_shots_on_target_against_last5"] = c2.number_input("Shots on target conceded", min_value=0.0, value=2.0, step=0.1, key=f"{key_prefix}_{prefix}_shots_ot_conceded")
+    values[f"{prefix}_fouls_for_last5"] = c1.number_input("Fouls registered", min_value=0.0, value=10.0, step=0.1, key=f"{key_prefix}_{prefix}_fouls_registered")
+    values[f"{prefix}_fouls_against_last5"] = c2.number_input("Fouls conceded", min_value=0.0, value=10.0, step=0.1, key=f"{key_prefix}_{prefix}_fouls_conceded")
+    values[f"{prefix}_corners_for_last5"] = c1.number_input("Corners registered", min_value=0.0, value=5.0, step=0.1, key=f"{key_prefix}_{prefix}_corners_registered")
+    values[f"{prefix}_corners_against_last5"] = c2.number_input("Corners conceded", min_value=0.0, value=5.0, step=0.1, key=f"{key_prefix}_{prefix}_corners_conceded")
+    values[f"{prefix}_yellow_cards_for_last5"] = c1.number_input("Yellow cards registered", min_value=0.0, value=DEFAULT_HOME_YELLOW_REGISTERED if prefix == "home" else DEFAULT_AWAY_YELLOW_REGISTERED, step=0.1, key=f"{key_prefix}_{prefix}_yellow_registered")
+    values[f"{prefix}_yellow_cards_against_last5"] = c2.number_input("Yellow cards conceded", min_value=0.0, value=DEFAULT_HOME_YELLOW_CONCEDED if prefix == "home" else DEFAULT_AWAY_YELLOW_CONCEDED, step=0.1, key=f"{key_prefix}_{prefix}_yellow_conceded")
+    values[f"{prefix}_red_cards_for_last5"] = c1.number_input("Red cards registered", min_value=0.0, value=DEFAULT_HOME_RED_REGISTERED if prefix == "home" else DEFAULT_AWAY_RED_REGISTERED, step=0.1, key=f"{key_prefix}_{prefix}_red_registered")
+    values[f"{prefix}_red_cards_against_last5"] = c2.number_input("Red cards conceded", min_value=0.0, value=DEFAULT_HOME_RED_CONCEDED if prefix == "home" else DEFAULT_AWAY_RED_CONCEDED, step=0.1, key=f"{key_prefix}_{prefix}_red_conceded")
     return values
 
 
 def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str, str, pd.DataFrame | None]:
-    """
-    Collect all inputs needed for prediction.
-    """
     st.subheader("Match Context")
 
     c1, c2 = st.columns(2)
@@ -682,47 +532,15 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str, str, pd.DataF
 
     row1_col1, row1_col2 = st.columns(2)
     with row1_col1:
-        matchday = st.number_input(
-            "Matchday",
-            min_value=1,
-            max_value=40,
-            value=10,
-            step=1,
-            key=f"{key_prefix}_matchday",
-            help="The league round number for the fixture.",
-        )
+        matchday = st.number_input("Matchday", min_value=1, max_value=40, value=10, step=1, key=f"{key_prefix}_matchday")
     with row1_col2:
-        match_hour = st.number_input(
-            "Match Hour",
-            min_value=0.0,
-            max_value=23.0,
-            value=float(DEFAULT_HOUR),
-            step=1.0,
-            key=f"{key_prefix}_match_hour",
-            help="If kickoff is between 20:00 and 20:59, enter 20.",
-        )
+        match_hour = st.number_input("Match Hour", min_value=0.0, max_value=23.0, value=float(DEFAULT_HOUR), step=1.0, key=f"{key_prefix}_match_hour")
 
     row2_col1, row2_col2 = st.columns(2)
     with row2_col1:
-        home_pre_position = st.number_input(
-            "Home pre-match position",
-            min_value=1,
-            max_value=20,
-            value=6,
-            step=1,
-            key=f"{key_prefix}_home_pre_position",
-            help="The home team's league position before kickoff. This stays user-controlled in all modes.",
-        )
+        home_pre_position = st.number_input("Home pre-match position", min_value=1, max_value=20, value=6, step=1, key=f"{key_prefix}_home_pre_position")
     with row2_col2:
-        away_pre_position = st.number_input(
-            "Away pre-match position",
-            min_value=1,
-            max_value=20,
-            value=10,
-            step=1,
-            key=f"{key_prefix}_away_pre_position",
-            help="The away team's league position before kickoff. This stays user-controlled in all modes.",
-        )
+        away_pre_position = st.number_input("Away pre-match position", min_value=1, max_value=20, value=10, step=1, key=f"{key_prefix}_away_pre_position")
 
     st.markdown("---")
     st.subheader("Feature Input Mode")
@@ -746,10 +564,6 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str, str, pd.DataF
             "Upload historical match data (CSV or Excel)",
             type=["csv", "xlsx", "xls"],
             key=f"{key_prefix}_uploaded_history_file",
-            help=(
-                "Required columns: Date, HomeTeam, AwayTeam, FTHG, FTAG, HS, AS, HST, AST, HF, AF, HC, AC. "
-                "HY, AY, HR, AR are optional but recommended."
-            ),
         )
 
         if uploaded_file is None:
@@ -778,27 +592,11 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str, str, pd.DataF
 
     with left:
         st.markdown("### Home Team Context")
-        home_form = st.number_input(
-            "Home form (0–1)",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.50,
-            step=0.01,
-            key=f"{key_prefix}_home_form",
-            help="Team form = total points from the last 5 matches divided by 15.",
-        )
+        home_form = st.number_input("Home form (0–1)", min_value=0.0, max_value=1.0, value=0.50, step=0.01, key=f"{key_prefix}_home_form")
 
     with right:
         st.markdown("### Away Team Context")
-        away_form = st.number_input(
-            "Away form (0–1)",
-            min_value=0.0,
-            max_value=1.0,
-            value=0.50,
-            step=0.01,
-            key=f"{key_prefix}_away_form",
-            help="Team form = total points from the last 5 matches divided by 15.",
-        )
+        away_form = st.number_input("Away form (0–1)", min_value=0.0, max_value=1.0, value=0.50, step=0.01, key=f"{key_prefix}_away_form")
 
     st.markdown("---")
 
@@ -824,9 +622,6 @@ def collect_model_inputs(key_prefix: str) -> tuple[dict, str, str, str, pd.DataF
 
 
 def render_prediction_output(results: pd.DataFrame, home_team: str, away_team: str) -> None:
-    """
-    Display the final prediction and probabilities.
-    """
     row = results.iloc[0]
     raw_prediction = row["prediction"]
     friendly_prediction = normalize_prediction_label(raw_prediction)
@@ -853,9 +648,6 @@ def render_prediction_output(results: pd.DataFrame, home_team: str, away_team: s
 
 
 def render_shap_bar_chart(contribution_df: pd.DataFrame, top_n: int = 10) -> None:
-    """
-    Plot a horizontal SHAP contribution chart.
-    """
     if contribution_df.empty:
         st.info("No SHAP contributions are available for plotting.")
         return
@@ -875,13 +667,6 @@ def render_shap_bar_chart(contribution_df: pd.DataFrame, top_n: int = 10) -> Non
 
 
 def render_explainability_section(shap_results: dict, prediction_results: pd.DataFrame) -> None:
-    """
-    Render the SHAP explainability dashboard.
-
-    Design rule:
-    - prediction_results is the single source of truth for displayed prediction and probabilities
-    - SHAP only explains that already-predicted class
-    """
     st.markdown("---")
     st.subheader("Model Explainability Dashboard")
     st.caption(
@@ -1063,30 +848,9 @@ elif st.session_state["current_page"] == "Analyse Bookmaker Bias":
 
         st.subheader("Insert Bookmaker Odds")
         b1, b2, b3 = st.columns(3)
-        bookmaker_home_odds = b1.number_input(
-            "Bookmaker Home Win Odds",
-            min_value=1.01,
-            value=2.10,
-            step=0.01,
-            key="bias_home_odds",
-            help="Insert the decimal odds quoted by the bookmaker for a home win.",
-        )
-        bookmaker_draw_odds = b2.number_input(
-            "Bookmaker Draw Odds",
-            min_value=1.01,
-            value=3.40,
-            step=0.01,
-            key="bias_draw_odds",
-            help="Insert the decimal odds quoted by the bookmaker for a draw.",
-        )
-        bookmaker_away_odds = b3.number_input(
-            "Bookmaker Away Win Odds",
-            min_value=1.01,
-            value=3.60,
-            step=0.01,
-            key="bias_away_odds",
-            help="Insert the decimal odds quoted by the bookmaker for an away win.",
-        )
+        bookmaker_home_odds = b1.number_input("Bookmaker Home Win Odds", min_value=1.01, value=2.10, step=0.01, key="bias_home_odds")
+        bookmaker_draw_odds = b2.number_input("Bookmaker Draw Odds", min_value=1.01, value=3.40, step=0.01, key="bias_draw_odds")
+        bookmaker_away_odds = b3.number_input("Bookmaker Away Win Odds", min_value=1.01, value=3.60, step=0.01, key="bias_away_odds")
 
         if st.button("Submit Bookmaker Analysis", use_container_width=True, key="submit_bias_analysis"):
             try:
@@ -1159,36 +923,12 @@ elif st.session_state["current_page"] == "Analyse Bookmaker Bias":
         st.caption("Useful for markets such as Over/Under, Yes/No, or any two-way bookmaker market.")
 
         t1, t2 = st.columns(2)
-        outcome_1_name = t1.text_input(
-            "Outcome 1 Name",
-            value="Over 2.5 Goals",
-            key="two_way_outcome_1_name",
-            help="Example: Over 2.5 Goals",
-        )
-        outcome_2_name = t2.text_input(
-            "Outcome 2 Name",
-            value="Under 2.5 Goals",
-            key="two_way_outcome_2_name",
-            help="Example: Under 2.5 Goals",
-        )
+        outcome_1_name = t1.text_input("Outcome 1 Name", value="Over 2.5 Goals", key="two_way_outcome_1_name")
+        outcome_2_name = t2.text_input("Outcome 2 Name", value="Under 2.5 Goals", key="two_way_outcome_2_name")
 
         o1, o2 = st.columns(2)
-        outcome_1_odds = o1.number_input(
-            f"{outcome_1_name} Odds",
-            min_value=1.01,
-            value=1.85,
-            step=0.01,
-            key="two_way_outcome_1_odds",
-            help="Insert the decimal bookmaker odds for outcome 1.",
-        )
-        outcome_2_odds = o2.number_input(
-            f"{outcome_2_name} Odds",
-            min_value=1.01,
-            value=1.95,
-            step=0.01,
-            key="two_way_outcome_2_odds",
-            help="Insert the decimal bookmaker odds for outcome 2.",
-        )
+        outcome_1_odds = o1.number_input(f"{outcome_1_name} Odds", min_value=1.01, value=1.85, step=0.01, key="two_way_outcome_1_odds")
+        outcome_2_odds = o2.number_input(f"{outcome_2_name} Odds", min_value=1.01, value=1.95, step=0.01, key="two_way_outcome_2_odds")
 
         if st.button("Calculate 2-Outcome Overround", use_container_width=True, key="two_way_overround_button"):
             try:
