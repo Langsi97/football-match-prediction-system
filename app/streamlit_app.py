@@ -20,7 +20,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.append(str(ROOT_DIR))
-
+import os
 import matplotlib.pyplot as plt
 import pandas as pd
 import requests
@@ -29,6 +29,10 @@ import streamlit as st
 from src.explainability.shap_explainer import compute_shap_explanation
 from src.inference.input_schema import build_feature_ready_row
 
+import joblib
+
+MODEL_PATH = "artifacts/models/random_forest_best.joblib"
+model = joblib.load(MODEL_PATH)
 
 st.set_page_config(
     page_title="Jupiler Pro League Match Predictor",
@@ -36,7 +40,8 @@ st.set_page_config(
     layout="wide",
 )
 
-API_URL = "http://127.0.0.1:8001/predict"
+prediction = model.predict(input_df)[0]
+probabilities = model.predict_proba(input_df)[0]
 
 JPL_TEAMS = [
     "Anderlecht",
